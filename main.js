@@ -289,7 +289,22 @@ async function ytAccessToken() {
 // ---------------------------------------------------------------------------
 const { spawn } = require('child_process');
 const STEM_NAMES = ['drums', 'bass', 'other', 'vocals'];
-const stemsTool = () => path.join(__dirname, 'tools', 'stems');
+// El motor necesita una carpeta con permiso de escritura (uv crea ahí su .venv): en la app instalada
+// los archivos van dentro del paquete (resources/stems), así que se copian a E:\IA\nexura-stems si
+// existe E:\IA o a los datos de la app. Con «npm start» se usa la misma carpeta: un solo entorno.
+const stemsSource = () => (app.isPackaged ? path.join(process.resourcesPath, 'stems') : path.join(__dirname, 'tools', 'stems'));
+function stemsTool() {
+  const dir = process.platform === 'win32' && fs.existsSync('E:\\IA') ? 'E:\\IA\\nexura-stems' : path.join(dataDir(), 'stems-engine');
+  try {
+    fs.mkdirSync(dir, { recursive: true });
+    for (const f of ['pyproject.toml', 'separate.py']) {
+      const src = path.join(stemsSource(), f), dst = path.join(dir, f);
+      const a = fs.readFileSync(src);
+      if (!fs.existsSync(dst) || !a.equals(fs.readFileSync(dst))) fs.writeFileSync(dst, a);
+    }
+  } catch (e) { console.warn('stems tool', e.message); }
+  return dir;
+}
 const stemsPython = () => path.join(stemsTool(), '.venv', process.platform === 'win32' ? 'Scripts/python.exe' : 'bin/python');
 // Carpeta por defecto: E:\IA\stems si existe E:\IA (SSD de modelos), si no dentro de los datos de la app
 function defaultStemsDir() {
