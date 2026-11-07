@@ -1,0 +1,63 @@
+{
+  "name": "nexura-dj-studio",
+  "productName": "Nexura DJ Studio",
+  "version": "0.9.0-beta.4",
+  "description": "Nexura DJ Studio — software DJ de NexuraIA compatible con controladoras MIDI y listas de YouTube",
+  "main": "main.js",
+  "author": "NexuraIA <contacto@nexuraia.com>",
+  "license": "UNLICENSED",
+  "private": true,
+  "scripts": {
+    "start": "electron .",
+    "dev": "electron . --dev",
+    "dist": "electron-builder --win nsis",
+    "dist:dir": "electron-builder --win dir",
+    "web": "node tools/serve.js",
+    "beta": "electron-builder --win nsis --x64 && node tools/package-beta.js"
+  },
+  "devDependencies": {
+    "electron": "^33.2.0",
+    "electron-builder": "^25.1.8"
+  },
+  "build": {
+    "appId": "com.nexuraia.djstudio",
+    "productName": "Nexura DJ Studio",
+    "copyright": "© NexuraIA",
+    "directories": {
+      "output": "dist",
+      "buildResources": "build"
+    },
+    "files": [
+      "main.js",
+      "preload.js",
+      "config.local.json",
+      "src/**/*",
+      "build/icon.png",
+      "!src/**/*.map"
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "build/icon.png",
+      "artifactName": "Nexura-DJ-Studio-Setup-${version}.${ext}"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "Nexura DJ Studio",
+      "uninstallDisplayName": "Nexura DJ Studio",
+      "runAfterFinish": true,
+      "deleteAppDataOnUninstall": false,
+      "include": "build/installer.nsh"
+    }
+  }
+}

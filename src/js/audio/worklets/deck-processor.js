@@ -1,0 +1,279 @@
+// Nexura DJ Studio — reproductor de deck en AudioWorklet
+// Lectura con interpolación Hermite, velocidad variable (incl. negativa para
+// scratch/censor), loops sin cortes, modo slip, freno/arranque de motor y
+// keylock / transposición mediante un pitch-shifter con empalmes por correlación.
+
+// Pitch-shifter por segmentos con empalme por correlación (estilo WSOLA/SoundTouch).
+// Un cabezal lee la línea de retardo con un retardo d que deriva (1 - factor) por muestra; cuando
+// sale del rango [dMin, dMax] se busca, por correlación, el retardo nuevo cuya forma de onda encaja
+// mejor con la que estaba sonando y se funde en ~10 ms. Así hay pocos empalmes (cada 40-500 ms
+// según el tempo) y todos en fase: sin el «flanger» ni el trémolo de los granulados de 2 cabezales.
+class PitchShifter {
+  constructor() {
+    this.N = 32768; this.mask = this.N - 1;
+    this.L = new Float32Array(this.N); this.R = new Float32Array(this.N);
+    this.w = 0;
+    this.X = Math.round(sampleRate * 0.010);     // fundido del empalme (10 ms)
+    this.S = Math.round(sampleRate * 0.0125);    // ventana de búsqueda (±12,5 ms ≥ un periodo de 80 Hz)
+    this.RANGE = Math.round(sampleRate * 0.045); // margen de deriva entre empalmes
+    this.d = 0; this.d2 = 0; this.x = -1;         // x ≥ 0: empalme en curso (muestras hechas)
+    this.reset();
+  }
+  reset() { this.L.fill(0); this.R.fill(0); this.x = -1; this.d = this.center(1); }
+  bounds(f) { const dMin = Math.ceil(this.X * Math.max(1, Math.min(f, 6))) + 64; return [dMin, dMin + this.RANGE]; }
+  center(f) { const [a, b] = this.bounds(f); return (a + b) / 2; }
+  read(buf, delay) {
+    let p = this.w - delay;
+    if (p < 0) p += this.N;
+    const i = p | 0, f = p - i, m = this.mask;
+    const xm1 = buf[(i - 1) & m], x0 = buf[i & m], x1 = buf[(i + 1) & m], x2 = buf[(i + 2) & m];
+    const c1 = 0.5 * (x1 - xm1), c2 = xm1 - 2.5 * x0 + 2 * x1 - 0.5 * x2, c3 = 0.5 * (x2 - xm1) + 1.5 * (x0 - x1);
+    return ((c3 * f + c2) * f + c1) * f + x0;
+  }
+  mono(delay) { let p = (this.w - delay) | 0; return this.L[p & this.mask] + this.R[p & this.mask]; }
+  // Mejor retardo en [lo, hi] para continuar lo que suena con retardo d (los dos cabezales avanzan a «factor»)
+  seek(d, lo, hi, f) {
+    const X = this.X, st = 4;
+    const ref = new Float32Array(Math.ceil(X / st)); let k = 0, er = 0;
+    for (let j = 0; j < X; j += st, k++) { const v = this.mono(d - j * f); ref[k] = v; er += v * v; }
+    let best = (lo + hi) / 2, bestV = -Infinity;
+    const score = (D) => { let c = 0, e = 1e-9, kk = 0; for (let j = 0; j < X; j += st, kk++) { const v = this.mono(D - j * f); c += ref[kk] * v; e += v * v; } return c / Math.sqrt(e * (er + 1e-9)); };
+    for (let D = lo; D <= hi; D += 3) { const v = score(D); if (v > bestV) { bestV = v; best = D; } }
+    for (let D = best - 2; D <= best + 2; D++) { if (D < lo || D > hi) continue; const v = score(D); if (v > bestV) { bestV = v; best = D; } }
+    return best;
+  }
+  // Procesa una muestra; factor = ratio de transposición (2 = una octava arriba)
+  process(l, r, factor, out) {
+    this.L[this.w] = l; this.R[this.w] = r;
+    const [dMin, dMax] = this.bounds(factor);
+    const unity = Math.abs(1 - factor) < 0.0015;
+    if (this.x < 0) {
+      if (unity) { const t = (dMin + dMax) / 2 - this.d; this.d += Math.max(-0.004, Math.min(0.004, t)); }
+      else if (this.d < dMin || this.d > dMax) {
+        // empalme: tono arriba (d baja) → saltar hacia dMax; tono abajo (d sube) → hacia dMin
+        const S2 = 2 * this.S;
+        const up = this.d < dMin;
+        const lo = up ? Math.max(dMin, dMax - S2) : dMin, hi = up ? dMax : Math.min(dMax, dMin + S2);
+        this.d2 = this.seek(Math.max(this.d, 1), lo, hi, factor);
+        this.x = 0;
+      }
+    }
+    const drift = unity ? 0 : 1 - factor;
+    if (this.x >= 0) {
+      const t = this.x / this.X, g = 0.5 - 0.5 * Math.cos(Math.PI * t); // 0 → 1
+      const dA = Math.max(this.d, 1);
+      out[0] = this.read(this.L, dA) * (1 - g) + this.read(this.L, this.d2) * g;
+      out[1] = this.read(this.R, dA) * (1 - g) + this.read(this.R, this.d2) * g;
+      this.d += drift; this.d2 += drift;
+      if (++this.x >= this.X) { this.d = this.d2; this.x = -1; }
+    } else {
+      const dA = Math.max(this.d, 1);
+      out[0] = this.read(this.L, dA); out[1] = this.read(this.R, dA);
+      this.d += drift;
+    }
+    if (this.d > this.N - 8) this.d = this.N - 8;
+    this.w = (this.w + 1) & this.mask;
+  }
+}
+
+// Hermite sobre stems en Int16 (para ahorrar memoria: 4 stems estéreo por deck)
+function hermite16(buf, pos, len) {
+  const i = Math.floor(pos);
+  if (i < 0 || i >= len) return 0;
+  const f = pos - i;
+  const xm1 = i > 0 ? buf[i - 1] : buf[i];
+  const x0 = buf[i];
+  const x1 = i + 1 < len ? buf[i + 1] : x0;
+  const x2 = i + 2 < len ? buf[i + 2] : x1;
+  const c1 = 0.5 * (x1 - xm1);
+  const c2 = xm1 - 2.5 * x0 + 2 * x1 - 0.5 * x2;
+  const c3 = 0.5 * (x2 - xm1) + 1.5 * (x0 - x1);
+  return (((c3 * f + c2) * f + c1) * f + x0) * (1 / 32768);
+}
+
+function hermite(buf, pos, len) {
+  const i = Math.floor(pos);
+  if (i < 0 || i >= len) return 0;
+  const f = pos - i;
+  const xm1 = i > 0 ? buf[i - 1] : buf[i];
+  const x0 = buf[i];
+  const x1 = i + 1 < len ? buf[i + 1] : x0;
+  const x2 = i + 2 < len ? buf[i + 2] : x1;
+  const c1 = 0.5 * (x1 - xm1);
+  const c2 = xm1 - 2.5 * x0 + 2 * x1 - 0.5 * x2;
+  const c3 = 0.5 * (x2 - xm1) + 1.5 * (x0 - x1);
+  return ((c3 * f + c2) * f + c1) * f + x0;
+}
+
+class DeckProcessor extends AudioWorkletProcessor {
+  constructor() {
+    super();
+    this.L = null; this.R = null; this.len = 0; this.ratio = 1;
+    this.pos = 0;            // posición en muestras del buffer
+    this.playing = false;
+    this.rate = 1;           // multiplicador de tempo (1 = 100 %)
+    this.bend = 0;           // pitch bend temporal
+    this.nudge = 0;          // empujón del jog (decae)
+    this.cur = 0;            // velocidad actual suavizada
+    this.reverse = false;
+    this.scratch = false;
+    this.scratchTarget = 0;
+    this.loopOn = false; this.loopS = 0; this.loopE = 0;
+    this.slipping = false; this.shadow = 0;
+    this.keylock = false; this.semis = 0;
+    this.ps = new PitchShifter();
+    this.psMix = 0;          // fundido seco/transpuesto
+    this.startT = 0.004; this.stopT = 0.004; // tiempos de motor (s)
+    this.ended = false;
+    this.tick = 0;
+    this.tmp = new Float32Array(2);
+    // stems: [{L, R}] Int16 en el mismo orden que stemGains; con stems cargados se reproduce su suma
+    this.stems = null; this.stemLen = 0;
+    this.sgTarget = new Float32Array([1, 1, 1, 1]);
+    this.sg = new Float32Array([1, 1, 1, 1]);
+    this.port.onmessage = (e) => this.onMsg(e.data);
+  }
+
+  onMsg(m) {
+    switch (m.t) {
+      case 'load':
+        this.L = m.L; this.R = m.R || m.L; this.len = this.L.length; this.stems = null;
+        this.ratio = (m.sr || sampleRate) / sampleRate;
+        this.pos = m.pos || 0; this.cur = 0; this.playing = false; this.loopOn = false;
+        this.slipping = false; this.ended = false; this.scratch = false; this.reverse = false;
+        this.ps.reset();
+        break;
+      case 'unload': this.L = this.R = null; this.len = 0; this.playing = false; this.stems = null; break;
+      case 'stems':
+        if (m.stems && m.stems.length) {
+          this.stems = m.stems; this.stemLen = Math.min(...m.stems.map(x => x.L.length));
+          if (m.gains) for (let k = 0; k < 4; k++) { this.sgTarget[k] = m.gains[k]; this.sg[k] = m.gains[k]; }
+        } else this.stems = null;
+        break;
+      case 'stemGains': for (let k = 0; k < 4; k++) if (m.v[k] != null) this.sgTarget[k] = m.v[k]; break;
+      case 'play':
+        this.playing = !!m.v;
+        if (this.playing && this.ended) this.ended = false;
+        break;
+      case 'rate': this.rate = m.v; break;
+      case 'bend': this.bend = m.v; break;
+      case 'nudge': this.nudge += m.v; break;
+      case 'seek':
+        this.pos = Math.max(0, Math.min(this.len - 1, m.v));
+        if (!this.slipping) this.shadow = this.pos;
+        this.ended = false;
+        if (this.scratch) this.scratchTarget = this.pos;
+        break;
+      case 'loop':
+        this.loopOn = !!m.on;
+        if (m.s != null) { this.loopS = m.s; this.loopE = m.e; }
+        if (this.loopOn && m.jump && (this.pos >= this.loopE || this.pos < this.loopS)) this.pos = this.loopS;
+        break;
+      case 'scratch':
+        this.scratch = !!m.v;
+        this.scratchTarget = this.pos;
+        break;
+      case 'scratchDelta': this.scratchTarget += m.v; break;
+      case 'reverse': this.reverse = !!m.v; break;
+      case 'slipBegin':
+        if (!this.slipping) { this.slipping = true; this.shadow = this.pos; }
+        break;
+      case 'slipEnd':
+        if (this.slipping) {
+          this.slipping = false;
+          if (m.jump !== false) { this.pos = Math.min(this.shadow, this.len - 1); if (this.scratch) this.scratchTarget = this.pos; }
+        }
+        break;
+      case 'keylock': this.keylock = !!m.v; break;
+      case 'semis': this.semis = m.v; break;
+      case 'motor': this.startT = Math.max(0.002, m.start); this.stopT = Math.max(0.002, m.stop); break;
+    }
+  }
+
+  process(_inputs, outputs) {
+    const out = outputs[0];
+    const oL = out[0], oR = out[1] || out[0];
+    const n = oL.length;
+    if (!this.L) { oL.fill(0); if (oR !== oL) oR.fill(0); return true; }
+
+    // ---- velocidad objetivo
+    const prev = this.cur;
+    if (this.scratch) {
+      const diff = this.scratchTarget - this.pos;
+      let want = diff / (n * this.ratio * 2.5);
+      want = Math.max(-24, Math.min(24, want));
+      this.cur += (want - this.cur) * 0.55;
+    } else {
+      let target = this.playing && !this.ended ? (this.rate + this.bend + this.nudge) : 0;
+      if (this.reverse && this.playing) target = -Math.abs(target || this.rate);
+      const T = Math.abs(target) > Math.abs(this.cur) ? this.startT : this.stopT;
+      const step = (n / sampleRate) / T;
+      const d = target - this.cur;
+      this.cur = Math.abs(d) <= step ? target : this.cur + Math.sign(d) * step;
+    }
+    this.nudge *= 0.86;
+    if (Math.abs(this.nudge) < 1e-4) this.nudge = 0;
+
+    // ---- keylock / transposición
+    const semiF = Math.pow(2, this.semis / 12);
+    const speedAbs = Math.abs(this.cur);
+    const lockActive = this.keylock && !this.scratch && speedAbs > 0.3 && speedAbs < 3;
+    const wantPS = lockActive || this.semis !== 0;
+    const psFactor = (lockActive ? 1 / speedAbs : 1) * semiF;
+
+    const L = this.L, R = this.R, len = this.len, ratio = this.ratio;
+    const stems = this.stems, stemLen = this.stemLen, sg = this.sg, sgT = this.sgTarget;
+    const tmp = this.tmp;
+    const shadowStep = this.playing ? this.rate * ratio : 0;
+
+    for (let i = 0; i < n; i++) {
+      const s = prev + (this.cur - prev) * (i / n);
+      let l, r;
+      if (stems) {
+        // suma de stems con ganancias suavizadas (~10 ms) para evitar clics
+        l = 0; r = 0;
+        for (let k = 0; k < stems.length; k++) {
+          const g = sg[k] += (sgT[k] - sg[k]) * 0.0025;
+          if (g < 1e-4 && sgT[k] === 0) continue;
+          const st = stems[k];
+          l += g * hermite16(st.L, this.pos, stemLen);
+          r += g * hermite16(st.R, this.pos, stemLen);
+        }
+      } else {
+        l = hermite(L, this.pos, len);
+        r = hermite(R, this.pos, len);
+      }
+      // pitch-shifter (siempre alimentado para tener la línea de retardo lista)
+      if (wantPS || this.psMix > 0) {
+        this.ps.process(l, r, wantPS ? psFactor : 1, tmp);
+        if (wantPS && this.psMix < 1) this.psMix = Math.min(1, this.psMix + 1 / 512);
+        else if (!wantPS && this.psMix > 0) this.psMix = Math.max(0, this.psMix - 1 / 512);
+        const m = this.psMix;
+        l = l * (1 - m) + tmp[0] * m;
+        r = r * (1 - m) + tmp[1] * m;
+      }
+      oL[i] = l; oR[i] = r;
+
+      this.pos += s * ratio;
+      if (this.slipping) this.shadow += shadowStep;
+      if (this.loopOn && this.loopE > this.loopS) {
+        const ll = this.loopE - this.loopS;
+        if (s >= 0 && this.pos >= this.loopE) this.pos -= ll;
+        else if (s < 0 && this.pos < this.loopS) this.pos += ll;
+      }
+      if (this.pos >= len - 1) {
+        this.pos = len - 1;
+        if (this.playing && !this.scratch && !this.ended) { this.ended = true; this.port.postMessage({ t: 'ended' }); }
+      } else if (this.pos < 0) this.pos = 0;
+    }
+    if (!this.slipping) this.shadow = this.pos;
+
+    if (++this.tick >= 3) {
+      this.tick = 0;
+      this.port.postMessage({ t: 's', pos: this.pos, sp: this.cur, sh: this.shadow, sl: this.slipping });
+    }
+    return true;
+  }
+}
+
+registerProcessor('nexura-deck', DeckProcessor);

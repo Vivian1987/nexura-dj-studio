@@ -1,0 +1,24 @@
+[project]
+name = "nexura-stems"
+version = "0.1.0"
+description = "Separación de stems para Nexura DJ Studio con Demucs (Meta, licencia MIT) en la GPU"
+requires-python = ">=3.11,<3.12"
+dependencies = [
+  "demucs==4.0.1",
+  "torch==2.8.0",
+  "torchaudio==2.8.0",
+  "soundfile",
+  "numpy<2",
+]
+
+[tool.uv]
+override-dependencies = ["torch==2.8.0", "torchaudio==2.8.0"]
+
+[tool.uv.sources]
+torch = { index = "pytorch-cu128" }
+torchaudio = { index = "pytorch-cu128" }
+
+[[tool.uv.index]]
+name = "pytorch-cu128"
+url = "https://download.pytorch.org/whl/cu128"
+explicit = true

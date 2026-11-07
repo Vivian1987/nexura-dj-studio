@@ -1,0 +1,53 @@
+{
+  "name": "Nexura DJ Studio — Sugerencias de la beta",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "nexura-dj-sugerencias",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "a1b2c3d4-0001-4000-8000-000000000001",
+      "name": "Sugerencia recibida",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [0, 0],
+      "webhookId": "nexura-dj-sugerencias"
+    },
+    {
+      "parameters": {
+        "fromEmail": "Nexura DJ Studio <contacto@nexuraia.com>",
+        "toEmail": "contacto@nexuraia.com",
+        "subject": "={{ $json.body.subject || 'Sugerencia Nexura DJ Studio' }}",
+        "emailFormat": "html",
+        "html": "=<h2 style=\"font-family:sans-serif\">{{ $json.body.category }}</h2>\n<p style=\"font-family:sans-serif;font-size:15px;white-space:pre-wrap\">{{ $json.body.message }}</p>\n<table style=\"font-family:sans-serif;font-size:13px;border-collapse:collapse\">\n<tr><td style=\"padding:4px 10px\"><b>Contacto</b></td><td>{{ $json.body.contact || '(no indicado)' }}</td></tr>\n<tr><td style=\"padding:4px 10px\"><b>Versión</b></td><td>{{ $json.body.version }}</td></tr>\n<tr><td style=\"padding:4px 10px\"><b>Fecha</b></td><td>{{ $json.body.date }}</td></tr>\n</table>\n<h3 style=\"font-family:sans-serif\">Equipo</h3>\n<pre style=\"font-size:12px\">{{ $json.body.system || '(no incluido)' }}</pre>\n<h3 style=\"font-family:sans-serif\">Errores recientes</h3>\n<pre style=\"font-size:12px\">{{ $json.body.errors || '(ninguno)' }}</pre>",
+        "options": {
+          "replyTo": "={{ /^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$/.test($json.body.contact || '') ? $json.body.contact : 'contacto@nexuraia.com' }}"
+        }
+      },
+      "id": "a1b2c3d4-0002-4000-8000-000000000002",
+      "name": "Enviar correo a NexuraIA",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2.1,
+      "position": [260, 0]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={ \"success\": \"true\" }",
+        "options": {}
+      },
+      "id": "a1b2c3d4-0003-4000-8000-000000000003",
+      "name": "Responder OK",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [520, 0]
+    }
+  ],
+  "connections": {
+    "Sugerencia recibida": { "main": [[{ "node": "Enviar correo a NexuraIA", "type": "main", "index": 0 }]] },
+    "Enviar correo a NexuraIA": { "main": [[{ "node": "Responder OK", "type": "main", "index": 0 }]] }
+  },
+  "settings": { "executionOrder": "v1" }
+}

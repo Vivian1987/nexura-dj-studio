@@ -1,0 +1,9 @@
+{
+  "id": "hercules-generic",
+  "name": "Hercules DJ (genérico)",
+  "match": ["Hercules.*DJ", "DJControl"],
+  "manufacturer": "Hercules",
+  "version": 1,
+  "mappings": [],
+  "note": "Plantilla deliberadamente vacía: crea mappings con MIDI Learn; jogs y LEDs pueden requerir configuración específica del modelo."
+}

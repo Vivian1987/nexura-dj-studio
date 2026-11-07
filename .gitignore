@@ -1,0 +1,11 @@
+node_modules/
+dist/
+*.log
+.DS_Store
+# configuración privada (URL del webhook de sugerencias)
+config.local.json
+# entorno Python del motor de stems
+tools/stems/.venv/
+__pycache__/
+# notas internas de desarrollo (no se publican)
+CLAUDE.md

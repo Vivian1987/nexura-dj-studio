@@ -1,0 +1,9 @@
+{
+  "id": "numark-generic",
+  "name": "Numark (genérico)",
+  "match": ["Numark"],
+  "manufacturer": "Numark",
+  "version": 1,
+  "mappings": [],
+  "note": "Plantilla deliberadamente vacía: crea mappings con MIDI Learn después de identificar el modelo exacto y su modo MIDI."
+}

@@ -1,0 +1,9 @@
+{
+  "id": "pioneer-ddj-generic",
+  "name": "Pioneer DDJ (genérico)",
+  "match": ["\\bDDJ[- ]", "Pioneer DJ"],
+  "manufacturer": "Pioneer DJ",
+  "version": 1,
+  "mappings": [],
+  "note": "Plantilla deliberadamente vacía: los números MIDI varían entre modelos. Usa MIDI Learn para crear un perfil verificado para tu modelo exacto."
+}

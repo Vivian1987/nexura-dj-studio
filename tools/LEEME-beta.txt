@@ -1,0 +1,47 @@
+NEXURA DJ STUDIO — VERSIÓN BETA {{VERSION}}
+NexuraIA · contacto@nexuraia.com · nexuraia.com
+=================================================================
+
+Gracias por probar Nexura DJ Studio. Es una versión de prueba: puede
+tener errores y algunas funciones aún no están terminadas. Tu opinión
+nos ayuda a mejorarla.
+
+REQUISITOS
+- Windows 10 u 11 de 64 bits.
+- Opcional: una controladora DJ MIDI por USB (también se usa con teclado y ratón).
+
+INSTALACIÓN
+1. Descomprime este ZIP (clic derecho → Extraer todo).
+2. Ejecuta «{{SETUP}}».
+3. Windows puede mostrar «Windows protegió su PC». Es normal en
+   programas nuevos que todavía no tienen firma digital:
+   pulsa «Más información» → «Ejecutar de todas formas».
+4. Sigue el asistente. Se crea un acceso directo «Nexura DJ Studio»
+   en el escritorio y en el menú Inicio.
+
+PRIMEROS PASOS
+- Arrastra canciones (MP3, WAV, FLAC, M4A, OGG) o carpetas a la
+  biblioteca, o usa «+ Carpeta».
+- Doble clic en una canción para cargarla en un deck.
+- YouTube: barra lateral → «+ Lista» y pega el enlace de una lista.
+- Controladora: conéctala por USB antes de abrir el programa. Si no se
+  reconoce sola, ve a ⚙ Ajustes → MIDI → «Añadir controladora».
+  Elige su tarjeta de sonido como salida en ⚙ Ajustes → Audio.
+
+ENVIAR SUGERENCIAS O ERRORES
+- Dentro del programa: botón «💬 SUGERENCIAS» (barra superior).
+  Tu mensaje llega directamente a NexuraIA (no hace falta escribir un
+  correo). Si lo aceptas, se añaden datos técnicos del equipo (nunca tu
+  música ni tus archivos).
+- O escribe directamente a contacto@nexuraia.com.
+Cuéntanos qué estabas haciendo, qué esperabas y qué ocurrió.
+
+TUS DATOS
+Todo se guarda solo en tu ordenador. Las listas de YouTube se
+reproducen con el reproductor oficial de YouTube (requiere Internet).
+Las sugerencias se envían a NexuraIA a través del servicio FormSubmit.
+
+DESINSTALAR
+Configuración de Windows → Aplicaciones → Nexura DJ Studio → Desinstalar.
+
+© NexuraIA. Versión de prueba para uso personal; no redistribuir sin permiso.
