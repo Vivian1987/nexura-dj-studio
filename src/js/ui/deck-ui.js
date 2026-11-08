@@ -94,7 +94,7 @@ export class DeckUI {
     this.pads = [];
     for (let i = 0; i < 8; i++) {
       const p = el('div', { class: 'pad' }, el('span', { class: 'pad-label' }, String(i + 1)));
-      p.addEventListener('pointerdown', (e) => { if (e.button !== 0) return; e.preventDefault(); p.setPointerCapture(e.pointerId); d.padDown(i, e.shiftKey); });
+      p.addEventListener('pointerdown', (e) => { if (e.button !== 0) return; e.preventDefault(); p.setPointerCapture(e.pointerId); d.padDown(i, e.shiftKey || e.altKey); });
       const up = () => d.padUp(i);
       p.addEventListener('pointerup', up);
       p.addEventListener('pointercancel', up);
@@ -260,6 +260,12 @@ export class DeckUI {
           ? { label: 'Convertir en hot cue normal', fn: () => d.cueToggleLoop(i) }
           : { label: d.loop.e > d.loop.s ? 'Convertir en Cue Loop (loop actual)' : 'Convertir en Cue Loop', fn: () => d.cueToggleLoop(i) },
         { label: 'Borrar hot cue', fn: () => d.deleteCue(i) }
+      ]);
+    } else if (d.padMode === 'cueloop' && d.track && d.track.cueLoops && d.track.cueLoops[i]) {
+      this.app.contextMenu(e, [
+        { label: 'Renombrar…', fn: async () => { const n = await this.app.prompt('Nombre del Cue Loop', d.track.cueLoops[i].name || ''); if (n != null) d.setCueLoopName(i, n); } },
+        { label: 'Color', sub: CUE_COLORS.map(c => ({ label: '●', color: c, fn: () => d.setCueLoopColor(i, c) })) },
+        { label: 'Borrar Cue Loop (Mayús/Alt + pad)', fn: () => d.deleteCueLoop(i) }
       ]);
     } else if (d.padMode === 'savedloop' && d.track && d.track.loops[i]) {
       this.app.contextMenu(e, [

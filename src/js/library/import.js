@@ -202,19 +202,55 @@ function parseVdjDatabase(doc) {
 }
 
 // ---------------------------------------------------------------- listas sueltas
-const dirOf = (p) => p.replace(/[\\/][^\\/]*$/, '');
+const dirOf = (p) => (/[\\/]/.test(p) ? p.replace(/[\\/][^\\/]*$/, '') : '');
 const baseName = (p) => (p.split(/[\\/]/).pop() || '').replace(/\.[^.]+$/, '');
-function resolvePath(entry, listPath) {
+// quita los segmentos «.» y «..» (C:\Música\Listas\..\a.mp3 → C:\Música\a.mp3)
+function collapse(p, sep) {
+  const parts = p.split(sep), out = [];
+  for (const s of parts) {
+    if (s === '.') continue;
+    if (s === '..' && out.length && out[out.length - 1] !== '..' && !/^[A-Za-z]:$/.test(out[out.length - 1]) && out[out.length - 1] !== '') out.pop();
+    else out.push(s);
+  }
+  return out.join(sep);
+}
+export function resolvePath(entry, listPath) {
   let s = entry.trim();
   if (/^file:/i.test(s)) return fileUrlToPath(s);
-  if (/^[A-Za-z]:[\\/]/.test(s) || s.startsWith('/') || s.startsWith('\\\\')) return s;
-  const dir = dirOf(listPath), win = /^[A-Za-z]:/.test(dir) || dir.includes('\\');
-  return dir + (win ? '\\' : '/') + (win ? s.replace(/\//g, '\\') : s);
+  if (/^[A-Za-z]:[\\/]/.test(s)) return collapse(s.replace(/\//g, '\\'), '\\');
+  if (s.startsWith('\\\\')) return '\\\\' + collapse(s.slice(2), '\\');
+  if (s.startsWith('/')) return collapse(s, '/');
+  const dir = dirOf(listPath);
+  if (!dir) return s; // lista sin carpeta conocida (modo navegador): se queda relativa
+  const win = /^[A-Za-z]:/.test(dir) || dir.includes('\\');
+  return win ? collapse(dir + '\\' + s.replace(/\//g, '\\'), '\\') : collapse(dir + '/' + s.replace(/\\/g, '/'), '/');
 }
-// .m3u / .m3u8: una ruta por línea (las líneas «#» son comentarios)
+// Texto de una lista: UTF-8 (.m3u8 y la mayoría de .m3u) y, si no es UTF-8 válido, Latin-1 (Windows-1252)
+export function decodePlaylist(bytes) {
+  try { return new TextDecoder('utf-8', { fatal: true }).decode(bytes).replace(/^\uFEFF/, ''); }
+  catch (_) { return new TextDecoder('windows-1252').decode(bytes); }
+}
+// .m3u / .m3u8: una ruta por línea; «#EXTINF:duración,Artista - Título» describe la línea siguiente
+// (el resto de líneas «#» son comentarios). Devuelve también entries con título/artista/duración.
 export function parseM3u(text, listPath) {
-  const paths = text.split(/\r?\n/).map(l => l.trim()).filter(l => l && !l.startsWith('#')).map(l => resolvePath(l, listPath));
-  return { name: baseName(listPath) || 'Lista', paths };
+  const entries = [];
+  let info = null;
+  for (const raw of String(text).split(/\r?\n/)) {
+    const l = raw.trim();
+    if (!l) continue;
+    if (l.startsWith('#')) {
+      const m = /^#EXTINF:\s*(-?[\d.]+)[^,]*,(.*)$/i.exec(l);
+      if (m) {
+        const dur = parseFloat(m[1]), label = m[2].trim();
+        const sep = label.indexOf(' - ');
+        info = { duration: dur > 0 ? dur : 0, artist: sep > 0 ? label.slice(0, sep).trim() : '', title: (sep > 0 ? label.slice(sep + 3) : label).trim() };
+      }
+      continue;
+    }
+    entries.push({ path: resolvePath(l, listPath), ...(info || {}) });
+    info = null;
+  }
+  return { name: baseName(listPath) || 'Lista', paths: entries.map(e => e.path), entries };
 }
 // carpeta virtual XML (<VirtualFolder><song path="…"/>)
 export function parseVirtualFolder(text, listPath) {

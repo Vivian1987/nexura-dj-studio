@@ -2,7 +2,7 @@
 
 Software DJ de escritorio para Windows de **NexuraIA**. Mezcla tu música local y listas de **YouTube**, se controla con cualquier controladora **MIDI** (con perfil nativo para la **Denon DJ MC4000**) e incorpora herramientas de **IA que funcionan en tu ordenador**: stems, sugerencias, sets por texto y Automix.
 
-Versión actual: **0.9.0-beta.4** (beta).
+Versión actual: **0.9.0-beta.5** (beta).
 
 ## Puesta en marcha
 

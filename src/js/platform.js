@@ -51,6 +51,29 @@ export const platform = {
     return new Uint8Array(await f.arrayBuffer());
   },
   async exists(p) { if (N) return N.exists(p); return webFiles.has(p); },
+  // Archivos perdidos por lotes: [true/false] o null si no se puede comprobar (navegador)
+  async existsMany(paths) { if (N && N.existsMany) return N.existsMany(paths); return null; },
+  // Listas .m3u / .m3u8: [{ path, name, data }] o null
+  async openPlaylist() {
+    if (N && N.openPlaylist) return N.openPlaylist();
+    return new Promise((resolve) => {
+      const inp = document.createElement('input'); inp.type = 'file'; inp.multiple = true; inp.accept = '.m3u,.m3u8';
+      inp.onchange = async () => resolve(inp.files.length ? await Promise.all([...inp.files].map(async f => ({ path: f.name, name: f.name, data: new Uint8Array(await f.arrayBuffer()) }))) : null);
+      inp.click();
+    });
+  },
+  // Lista o archivo soltado: bytes y ruta (en el navegador solo el nombre)
+  async playlistFromFile(file) {
+    const p = N && N.pathForFile ? N.pathForFile(file) : null;
+    return { path: p || file.name, name: file.name, data: new Uint8Array(await file.arrayBuffer()) };
+  },
+  // Relocalizar: elegir carpeta y buscar archivos por nombre → { dir, files: [{path, size}] } o null
+  async findFiles(names) {
+    if (N && N.findFiles) return N.findFiles(names);
+    throw new Error('Relocalizar archivos solo está disponible en la app de escritorio');
+  },
+  // Carátula en miniatura (data: URL) o null
+  async artGet(id, p) { if (N && N.artGet) return N.artGet(id, p); return null; },
   async openFiles() { if (N) return N.openFiles(); return pickWeb(false); },
   async openFolder() { if (N) return N.openFolder(); return pickWeb(true); },
   // Devuelve [{ path, name, data: Uint8Array }] o null

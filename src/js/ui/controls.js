@@ -71,7 +71,9 @@ export class Fader {
     this.length = length;
     this.thumb = el('div', { class: 'fader-thumb' });
     this.fill = el('div', { class: 'fader-slot' });
-    this.el = el('div', { class: `fader ${vertical ? 'vertical' : 'horizontal'} ${cls}`, style: vertical ? { height: length + 'px' } : { width: length + 'px' } }, this.fill, this.thumb);
+    // la longitud va en --len (el CSS la usa como alto/ancho y puede acortarla en pantallas bajas)
+    this.el = el('div', { class: `fader ${vertical ? 'vertical' : 'horizontal'} ${cls}` }, this.fill, this.thumb);
+    this.el.style.setProperty('--len', length + 'px');
     if (notch != null) this.el.appendChild(el('div', { class: 'fader-notch', style: vertical ? { top: ((reversed ? notch : 1 - notch) * 100) + '%' } : { left: (notch * 100) + '%' } }));
     this.bind();
     this.set(value, true);

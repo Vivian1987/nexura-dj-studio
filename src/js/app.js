@@ -18,7 +18,8 @@ import { LibraryUI } from './ui/library-ui.js';
 import { Assistant } from './ai/assistant.js';
 import { Automix } from './ai/automix.js';
 import { StemsManager } from './audio/stems.js';
-import { parseLibrary, mergeInto, parseM3u, parseVirtualFolder } from './library/import.js';
+import { parseLibrary, mergeInto, parseM3u, parseVirtualFolder, decodePlaylist } from './library/import.js';
+import { planRelocation, fileName } from './library/relocate.js';
 import { readFileMarkers, parseCrate, id3Size } from './library/filemarkers.js';
 import { normalize, dominantBpm } from './audio/grid.js';
 import { parseRequest, planSet } from './ai/prompt.js';
@@ -32,7 +33,8 @@ const DEFAULTS = {
   pitchRange: 0.08, keylockDefault: false, quantize: true, cueLoops: true, aiAutoCues: true, aiEnergyMode: 'keep', automixBars: 16, ollamaUrl: 'http://127.0.0.1:11434', ollamaModel: '', syncPhase: true, autoGain: true,
   minBpm: 85, maxBpm: 175, motorStart: 4, motorStop: 4, jogSensitivity: 1,
   invertPitch: false, mc4000PhonesMidi: false, midiProfiles: {}, xfCurve: 'smooth', waveZoom: 6,
-  historyAfter: 30, loadOnPlaying: 'play', deckLayout: 'auto', stemsDir: '', stemsModel: 'htdemucs', stemsAuto: true, stemsBackground: true, autoAnalyze: true,
+  historyAfter: 30, loadOnPlaying: 'play', slipRelease: 0,
+  protectLibrary: false, libCols: null, libColsSame: true, libColsByView: {}, libArtSize: 'small', crateSort: 'custom', deckLayout: 'auto', stemsDir: '', stemsModel: 'htdemucs', stemsAuto: true, stemsBackground: true, autoAnalyze: true,
   expansions: { flip: false, fxPresets: false, laptop: false, video: false, dvs: false, pitchTime: false },
   ytApiKey: '', ytClientId: '', ytClientSecret: '',
   panels: { sampler: false }, midiMap: {}, libView: 'all', libSort: { field: null, dir: 1 }
@@ -66,6 +68,8 @@ class App extends Emitter {
     this.engine.setXfCurve(this.settings.xfCurve);
     this.analyzer = new Analyzer();
     this.library = new Library();
+    this.library.protected = !!this.settings.protectLibrary;
+    this.library.on('protected', (msg) => toast(msg, 'warn', 4500));
     await this.library.load();
     this.ai = new Assistant(this);
     this.youtube = new YouTubeService(() => this.settings);
@@ -131,6 +135,8 @@ class App extends Emitter {
     if (k === 'deckLayout') setTimeout(() => this.updateDeckMode(), 0);
     if (k === 'stemsBackground' && v && this.stems) this.stems.syncBackground();
     if (k === 'motorStart' || k === 'motorStop') this.decks.forEach(d => d.applyMotor());
+    if (k === 'slipRelease') this.decks.forEach(d => d.applySlipRelease());
+    if (k === 'protectLibrary' && this.library) this.library.protected = !!v;
     this.saveSettingsSoon();
     this.emit('settings', k, v);
   }
@@ -382,7 +388,12 @@ class App extends Emitter {
     const busy = toast(`Cargando «${t.title}»…`, 'info', 1500);
     let buf;
     try { buf = await this.decode(t); }
-    catch (e) { toast(`No se pudo abrir el archivo: ${t.path}`, 'error', 6000); return; }
+    catch (e) {
+      const lost = (await platform.existsMany([t.path]))?.[0] === false;
+      if (lost) this.libraryUI.markMissing(t.id, true);
+      toast(lost ? `Archivo perdido: ${t.path}. Clic derecho → «Relocalizar archivos perdidos…»` : `No se pudo abrir el archivo: ${t.path}`, 'error', 7000);
+      return;
+    }
     await d.load(t, buf);
     if (resume && d.track === t) d.play(); // la nueva pista entra sonando, sin silencio
     // stems ya separados: se cargan en segundo plano (la pista suena mientras tanto)
@@ -408,6 +419,7 @@ class App extends Emitter {
   // carpetas virtuales .vdjfolder y crates .crate (varios archivos a la vez). Además puede leer los
   // cues, loops y beatgrids que otros programas guardan dentro de los propios archivos de audio.
   async importLibrary() {
+    if (!this.library.guard('tags')) return;
     let files;
     try { files = await platform.openLibraryFile(); } catch (e) { return toast('No se pudo leer el archivo: ' + e.message, 'error'); }
     if (!files || !files.length) return;
@@ -502,6 +514,7 @@ class App extends Emitter {
 
   // Lee los cues, loops y beatgrid guardados dentro de los archivos de las pistas indicadas
   async readMarkersFromFiles(sel) {
+    if (!this.library.guard('grid')) return;
     const list = sel.filter(t => t.source === 'local');
     let n = 0;
     for (const t of list) {
@@ -525,6 +538,8 @@ class App extends Emitter {
   async analyzeMany(tracks, force = false) {
     // sin «force»: pistas sin analizar y las analizadas con una versión antigua (sin estructura/energía de la IA);
     // se respetan el BPM y la tonalidad bloqueados por el usuario
+    // «Volver a analizar» desbloquea BPM y tonalidad: no se permite con la biblioteca protegida
+    if (force && !this.library.guard('grid')) return;
     const list = tracks.filter(t => t.source === 'local' && (force || !t.analyzed || t.sections === undefined));
     if (!list.length) return toast('No hay pistas pendientes de análisis', 'info');
     if (this.analyzing) return toast('Ya hay un análisis en curso', 'warn');
@@ -563,6 +578,100 @@ class App extends Emitter {
     toast(`${added.length} pistas añadidas`, 'ok');
     if (this.settings.autoAnalyze) this.analyzeMany(added);
     return added;
+  }
+
+  // Listas .m3u / .m3u8 (botón de la barra lateral o arrastrar el archivo): una crate con el nombre del
+  // archivo y las pistas que existen; se avisa de las que faltan. #EXTINF rellena artista/título/duración
+  // de las pistas nuevas sin etiquetas.
+  async importM3u() {
+    let files;
+    try { files = await platform.openPlaylist(); } catch (e) { return toast('No se pudo leer la lista: ' + e.message, 'error'); }
+    if (files && files.length) return this.importPlaylists(files);
+  }
+  async importPlaylists(files) {
+    if (!files || !files.length || !this.library.guard('crate')) return null;
+    const L = this.library, status = $('#lib-status'), fresh = [];
+    let crate = null, found = 0, missing = 0;
+    for (const f of files) {
+      let pl;
+      try { pl = parseM3u(decodePlaylist(f.data), f.path); } catch (e) { toast(`«${f.name}»: ${e.message}`, 'error'); continue; }
+      if (!pl.entries.length) { toast(`«${f.name}» no contiene pistas`, 'warn'); continue; }
+      const ids = [];
+      if (isDesktop) {
+        const infos = [];
+        for (let i = 0; i < pl.entries.length; i += 200) {
+          if (status) status.textContent = `Lista «${pl.name}»: buscando archivos ${Math.min(i + 200, pl.entries.length)}/${pl.entries.length}…`;
+          infos.push(...await platform.infoForPaths(pl.entries.slice(i, i + 200).map(e => e.path)));
+        }
+        const byP = new Map(infos.map(x => [x.path.toLowerCase(), x]));
+        const before = new Set(L.tracks.keys());
+        L.addFiles(infos);
+        for (const e of pl.entries) {
+          const info = byP.get(e.path.toLowerCase());
+          const t = info && L.byPath(info.path);
+          if (!t) { missing++; continue; }
+          if (!before.has(t.id)) {
+            const patch = {};
+            if (e.title && !info.artist && e.artist) { patch.title = e.title; patch.artist = e.artist; }
+            if (e.duration && !t.duration) patch.duration = e.duration;
+            if (Object.keys(patch).length) L.update(t.id, patch);
+            if (!fresh.includes(t)) fresh.push(t);
+          }
+          ids.push(t.id);
+        }
+      } else {
+        // navegador: sin acceso a rutas; se buscan por nombre de archivo entre las pistas ya añadidas
+        const web = [...L.tracks.values()].filter(t => t.path.startsWith('web:'));
+        for (const e of pl.entries) {
+          const name = fileName(e.path).toLowerCase();
+          const t = web.find(x => x.path.slice(4).toLowerCase().startsWith(name + ':'));
+          if (t) ids.push(t.id); else missing++;
+        }
+      }
+      found += ids.length;
+      if (!ids.length) continue;
+      crate = L.crates.find(c => c.name === pl.name) || L.createCrate(pl.name);
+      if (crate) L.addToCrate(crate.id, [...new Set(ids)]);
+    }
+    if (status) status.textContent = '';
+    if (crate) this.libraryUI.setView('crate:' + crate.id);
+    const msg = `${found} pista(s) importadas${crate ? ` en la crate «${crate.name}»` : ''}` + (missing ? ` · ${missing} no se encontraron en este equipo` : '');
+    toast(msg, missing ? 'warn' : 'ok', missing ? 7000 : 4000);
+    if (fresh.length && this.settings.autoAnalyze) this.analyzeMany(fresh);
+    return { found, missing, crate };
+  }
+
+  // Relocalizar archivos perdidos: se busca por nombre (y tamaño si hay empate) en la carpeta elegida y
+  // se cambia la ruta conservando el id, así no se pierden cues, beatgrid, valoración ni crates
+  async relocateMissing(tracks) {
+    const pool = (tracks && tracks.length ? tracks : [...this.library.tracks.values()]).filter(t => t.source === 'local');
+    const ex = await platform.existsMany(pool.map(t => t.path));
+    if (!ex) return toast('Relocalizar archivos solo está disponible en la app de escritorio', 'warn');
+    const lost = pool.filter((t, i) => !ex[i]);
+    pool.forEach((t, i) => this.libraryUI.markMissing(t.id, !ex[i]));
+    if (!lost.length) return toast('No hay archivos perdidos: todas las pistas están en su sitio', 'ok');
+    if (await this.modal('Relocalizar archivos perdidos', el('div', {},
+      el('p', {}, `${lost.length} pista(s) no están donde se añadieron.`),
+      el('p', { class: 'hint' }, 'Elige la carpeta (o el disco) donde están ahora: se buscarán por nombre de archivo en todas sus subcarpetas y, si hay varios con el mismo nombre, por tamaño. Se conservan cues, beatgrid, valoración, crates e historial.')), ['Cancelar', 'Elegir carpeta…']) !== 1) return;
+    const st = $('#lib-status');
+    if (st) st.textContent = 'Buscando archivos perdidos…';
+    let res;
+    try { res = await platform.findFiles([...new Set(lost.map(t => fileName(t.path)))]); }
+    catch (e) { if (st) st.textContent = ''; return toast(e.message, 'error'); }
+    if (st) st.textContent = '';
+    if (!res) return;
+    const lostIds = new Set(lost.map(t => t.id));
+    const taken = new Set([...this.library.tracks.values()].filter(t => !lostIds.has(t.id) && t.path).map(t => t.path.toLowerCase()));
+    const plan = planRelocation(lost, res.files, taken);
+    const size = new Map(res.files.map(f => [f.path, f.size]));
+    const n = this.library.relocate(plan.moves.map(m => ({ ...m, size: size.get(m.path) })));
+    for (const m of plan.moves) { this.libraryUI.markMissing(m.id, false); this.bufferCache.delete(m.id); }
+    this.modal('Relocalización terminada', el('div', {},
+      el('p', {}, `${n} de ${lost.length} archivo(s) relocalizados en ${res.dir}.`),
+      plan.notFound.length ? el('p', { class: 'set-note' }, `${plan.notFound.length} no se encontraron en esa carpeta.`) : null,
+      plan.ambiguous.length ? el('p', { class: 'set-note' }, `${plan.ambiguous.length} tienen varios archivos con el mismo nombre y tamaño: relocalízalos eligiendo una carpeta más concreta.`) : null,
+      plan.duplicate.length ? el('p', { class: 'set-note' }, `${plan.duplicate.length} ya estaban en la biblioteca con la ruta nueva (se han dejado como estaban).`) : null));
+    return { ...plan, n };
   }
 
   // ------------------------------------------------------------------ efectos
@@ -653,6 +762,7 @@ class App extends Emitter {
     const set = this.ai.buildSet(start, clamp(parseInt(count.value, 10) || 15, 3, 60), curve.value, pool);
     if (set.length < 2) return toast('No hay suficientes pistas analizadas y compatibles para crear el set', 'warn');
     const crate = this.library.createCrate(`Set IA · ${start.title}`.slice(0, 60));
+    if (!crate) return;
     this.library.addToCrate(crate.id, set.map(t => t.id));
     this.showInSetOrder();
     this.libraryUI.setView('crate:' + crate.id);
@@ -694,6 +804,7 @@ class App extends Emitter {
       return toast(`No encuentro suficientes pistas analizadas para «${text}» (${plan.pool.length} encajan con los filtros). Prueba a ampliar BPM o estilo, o analiza más música.`, 'warn', 7000);
     }
     const crate = this.library.createCrate(('Set IA · ' + text).slice(0, 60));
+    if (!crate) { if (toPrepare.checked) { this.library.addToPrepare(plan.set.map(t => t.id)); this.libraryUI.setView('prepare'); toast(`Set de ${plan.set.length} pistas enviado a Prepare (la biblioteca está protegida: no se crea la crate)`, 'ok', 6000); } return; }
     this.library.addToCrate(crate.id, plan.set.map(t => t.id));
     if (toPrepare.checked) this.library.addToPrepare(plan.set.map(t => t.id));
     this.showInSetOrder();

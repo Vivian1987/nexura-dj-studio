@@ -9,3 +9,5 @@ tools/stems/.venv/
 __pycache__/
 # notas internas de desarrollo (no se publican)
 CLAUDE.md
+# capturas y notas de revisión locales
+.revision/

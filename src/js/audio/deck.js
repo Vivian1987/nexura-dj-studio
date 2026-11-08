@@ -5,9 +5,9 @@ import { YTSource } from '../youtube/youtube.js';
 import { STEMS, STEM_PRESETS } from './stems.js';
 import * as Grid from './grid.js';
 
-export const PAD_MODES = ['hotcue', 'savedloop', 'roll', 'slicer', 'beatjump', 'sampler', 'pitchplay', 'stems'];
+export const PAD_MODES = ['hotcue', 'cueloop', 'savedloop', 'roll', 'slicer', 'beatjump', 'sampler', 'pitchplay', 'stems'];
 export const PAD_MODE_NAMES = {
-  hotcue: 'Hot Cue', savedloop: 'Saved Loop', roll: 'Roll', slicer: 'Slicer',
+  hotcue: 'Hot Cue', cueloop: 'Cue Loop', savedloop: 'Saved Loop', roll: 'Roll', slicer: 'Slicer',
   beatjump: 'Beat Jump', sampler: 'Sampler', pitchplay: 'Pitch Play', stems: 'Stems'
 };
 const STEM_PAD_PRESETS = ['acapella', 'instrumental', 'drums', 'all'];
@@ -64,6 +64,7 @@ export class Deck extends Emitter {
     this.stemGains = [1, 1, 1, 1];     // voz, batería, bajo, melodía
     this.send({ t: 'keylock', v: this.keylock });
     this.applyMotor();
+    this.applySlipRelease();
   }
 
   send(m, transfer) { this.node.port.postMessage(m, transfer || []); }
@@ -71,6 +72,10 @@ export class Deck extends Emitter {
     const s = this.app.settings;
     this.send({ t: 'motor', start: (s.motorStart ?? 4) / 1000, stop: (s.motorStop ?? 4) / 1000 });
   }
+  // Retorno del slip: al soltar, fundido desde lo que sonaba hasta la posición sombra (0 = salto inmediato)
+  applySlipRelease() { this.send({ t: 'slipRelease', v: clamp(Number(this.app.settings.slipRelease) || 0, 0, 1000) / 1000 }); }
+  // Proteger biblioteca: el BPM y el beatgrid no se pueden cambiar
+  gridEditable() { return this.app.library.guard('grid'); }
 
   onWorklet(m) {
     if (m.t === 's') { this.st = { pos: m.pos / this.sr, sp: m.sp, at: performance.now() }; }
@@ -394,7 +399,7 @@ export class Deck extends Emitter {
   scratchBySeconds(sec) { if (!this.isYT) this.send({ t: 'scratchDelta', v: sec * this.sr }); }
 
   // ---------------------------------------------------------------- hot cues
-  saveCues() { this.app.library.update(this.track.id, { cues: this.track.cues, loops: this.track.loops }); this.emit('cues'); }
+  saveCues() { this.app.library.update(this.track.id, { cues: this.track.cues, loops: this.track.loops, cueLoops: this.track.cueLoops }); this.emit('cues'); }
   hotcue(n) {
     if (!this.track) return;
     const c = this.track.cues[n];
@@ -537,6 +542,29 @@ export class Deck extends Emitter {
   }
   deleteSavedLoop(n) { if (this.track && this.track.loops[n]) { this.track.loops[n] = null; this.saveCues(); } }
 
+  // Modo de pads Cue Loop: 8 cues con loop propios de la pista (track.cueLoops, aparte de los hot cues).
+  // Pad vacío: guarda un cue en la posición actual (cuantizado con Q) con un loop de la longitud del
+  // auto loop (o el loop activo, si lo hay). Pad lleno: salta al cue y activa su loop; otra vez, lo sale.
+  cueLoopSlots() { const t = this.track; if (!t) return null; if (!t.cueLoops) t.cueLoops = Array(8).fill(null); return t.cueLoops; }
+  cueLoop(n) {
+    if (!this.track) return;
+    if (this.isYT) return this.app.toast('Los loops no están disponibles en pistas de YouTube', 'warn');
+    const cl = this.cueLoopSlots(), c = cl[n];
+    if (c) return this.triggerCueLoop(n, c);
+    let s, e;
+    if (this.loop.on && this.loop.e > this.loop.s && !this.rolling) { s = this.loop.s; e = this.loop.e; }
+    else {
+      s = this.q(this.time);
+      e = this.bpm ? this.beatTime(this.beatAt(s) + this.loopBeats) : s + this.loopBeats * 0.5;
+    }
+    cl[n] = { t: s, le: Math.min(e, this.duration || e), color: CUE_COLORS[n % CUE_COLORS.length], name: '' };
+    this.saveCues();
+    this.app.toast(`Cue Loop ${n + 1} guardado (${this.loopLabel(cl[n].le - s)})`);
+  }
+  deleteCueLoop(n) { const cl = this.track && this.track.cueLoops; if (cl && cl[n]) { cl[n] = null; this.saveCues(); } }
+  setCueLoopColor(n, color) { const c = this.track?.cueLoops?.[n]; if (c) { c.color = color; this.saveCues(); } }
+  setCueLoopName(n, name) { const c = this.track?.cueLoops?.[n]; if (c) { c.name = name; this.saveCues(); } }
+
   // ---------------------------------------------------------------- beat jump
   beatJump(beats) {
     if (!this.track) return;
@@ -600,12 +628,14 @@ export class Deck extends Emitter {
     const m = this.padMode;
     if (shift) {
       if (m === 'hotcue') this.deleteCue(i);
+      else if (m === 'cueloop') this.deleteCueLoop(i);
       else if (m === 'savedloop') this.deleteSavedLoop(i);
       else if (m === 'sampler') this.app.sampler.stop(i);
       return;
     }
     switch (m) {
       case 'hotcue': this.hotcue(i); break;
+      case 'cueloop': this.cueLoop(i); break;
       case 'savedloop': this.savedLoop(i); break;
       case 'roll': this.rollStart(ROLL_BEATS[i]); break;
       case 'slicer': this.slicerPress(i); break;
@@ -640,6 +670,11 @@ export class Deck extends Emitter {
         if (c.le) return { on: true, color: c.color, label: '⟳ ' + (c.name || String(i + 1)), loop: true, active: this.isCueLoopActive(c) };
         return { on: true, color: c.color, label: c.name || String(i + 1) };
       }
+      case 'cueloop': {
+        const c = t && t.cueLoops && t.cueLoops[i];
+        if (!c) return { on: false, dim: t && !this.isYT ? '#123a3a' : null, label: 'CL' + (i + 1) };
+        return { on: true, color: c.color, label: '⟳ ' + (c.name || 'CL' + (i + 1)), loop: true, active: this.isCueLoopActive(c) };
+      }
       case 'savedloop': {
         const l = t && t.loops[i];
         const active = l && this.loop.on && Math.abs(this.loop.s - l.s) < 1e-3;
@@ -666,6 +701,7 @@ export class Deck extends Emitter {
 
   // ---------------------------------------------------------------- beatgrid
   tap() {
+    if (this.track && !this.gridEditable()) return;
     const now = performance.now();
     this.taps = this.taps.filter(t => now - t < 2500);
     this.taps.push(now);
@@ -687,6 +723,7 @@ export class Deck extends Emitter {
   }
   gridMarkers() { return Grid.markers(this.track).map(m => ({ ...m })); }
   setBpm(bpm) {
+    if (this.track && !this.gridEditable()) return;
     if (!this.track || !(bpm > 20)) return;
     if (this.hasGridMarkers) {
       // escribir el BPM en el tramo actual: las marcas siguientes se desplazan para conservar los beats
@@ -704,12 +741,14 @@ export class Deck extends Emitter {
     if (this.sync) this.syncNow();
   }
   bpmScale(f) {
+    if (this.track && !this.gridEditable()) return;
     if (!this.bpm) return;
     if (this.hasGridMarkers) return this.saveGrid(this.gridMarkers().map(m => ({ t: m.t, bpm: m.bpm * f })));
     this.setBpm(Math.round(this.bpm * f * 100) / 100);
   }
   bpmNudge(d) { if (this.bpm) this.setBpm(Math.round((this.bpm + d) * 1000) / 1000); }
   gridShift(ms) {
+    if (this.track && !this.gridEditable()) return;
     if (!this.track || !this.bpm) return;
     if (this.hasGridMarkers) {
       // mueve la marca del tramo actual (el tramo anterior se reajusta a beats enteros)
@@ -723,6 +762,7 @@ export class Deck extends Emitter {
     this.emit('track', this.track); this.emit('grid');
   }
   downbeatHere() {
+    if (this.track && !this.gridEditable()) return;
     if (!this.track || !this.bpm) return;
     if (this.hasGridMarkers) {
       const g = this.gridMarkers(), i = Grid.markerIndexAt(this.track, this.time);
@@ -738,6 +778,7 @@ export class Deck extends Emitter {
   }
   // Marca de grid en la posición actual (coloca el cabezal sobre el golpe y pulsa +MARCA)
   addGridMarker(t = this.time) {
+    if (this.track && !this.gridEditable()) return;
     if (!this.track || !this.bpm) return this.app.toast('Primero analiza la pista o fija su BPM', 'warn');
     const g = this.gridMarkers();
     const i = Grid.markerIndexAt(this.track, t);
@@ -748,6 +789,7 @@ export class Deck extends Emitter {
     this.app.toast(`Marca de grid añadida (${this.hasGridMarkers ? this.track.grid.length : 1} marcas)`);
   }
   removeGridMarker(t = this.time) {
+    if (this.track && !this.gridEditable()) return;
     if (!this.hasGridMarkers) return this.app.toast('La pista no tiene marcas de grid', 'info');
     const g = this.gridMarkers();
     let i = Grid.markerIndexAt(this.track, t);
@@ -757,6 +799,7 @@ export class Deck extends Emitter {
     this.saveGrid(g);
   }
   clearGridMarkers() {
+    if (this.track && !this.gridEditable()) return;
     if (!this.hasGridMarkers) return;
     const g = this.gridMarkers(), i = Grid.markerIndexAt(this.track, this.time);
     this.saveGrid([{ t: g[0].t, bpm: g[i].bpm }]);

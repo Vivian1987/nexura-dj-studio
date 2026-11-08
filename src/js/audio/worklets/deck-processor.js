@@ -120,6 +120,10 @@ class DeckProcessor extends AudioWorkletProcessor {
     this.scratchTarget = 0;
     this.loopOn = false; this.loopS = 0; this.loopE = 0;
     this.slipping = false; this.shadow = 0;
+    // retorno del slip: al soltar se funde (potencia constante) desde la cabeza «vieja» a la sombra
+    this.slipRelease = 0;    // segundos (0 = salto inmediato)
+    this.xfPos = 0; this.xfN = 0; this.xfLen = 0;
+    this.tmp2 = new Float32Array(2);
     this.keylock = false; this.semis = 0;
     this.ps = new PitchShifter();
     this.psMix = 0;          // fundido seco/transpuesto
@@ -140,10 +144,10 @@ class DeckProcessor extends AudioWorkletProcessor {
         this.L = m.L; this.R = m.R || m.L; this.len = this.L.length; this.stems = null;
         this.ratio = (m.sr || sampleRate) / sampleRate;
         this.pos = m.pos || 0; this.cur = 0; this.playing = false; this.loopOn = false;
-        this.slipping = false; this.ended = false; this.scratch = false; this.reverse = false;
+        this.slipping = false; this.ended = false; this.scratch = false; this.reverse = false; this.xfN = 0;
         this.ps.reset();
         break;
-      case 'unload': this.L = this.R = null; this.len = 0; this.playing = false; this.stems = null; break;
+      case 'unload': this.L = this.R = null; this.len = 0; this.playing = false; this.stems = null; this.xfN = 0; break;
       case 'stems':
         if (m.stems && m.stems.length) {
           this.stems = m.stems; this.stemLen = Math.min(...m.stems.map(x => x.L.length));
@@ -160,6 +164,7 @@ class DeckProcessor extends AudioWorkletProcessor {
       case 'nudge': this.nudge += m.v; break;
       case 'seek':
         this.pos = Math.max(0, Math.min(this.len - 1, m.v));
+        this.xfN = 0;
         if (!this.slipping) this.shadow = this.pos;
         this.ended = false;
         if (this.scratch) this.scratchTarget = this.pos;
@@ -181,13 +186,33 @@ class DeckProcessor extends AudioWorkletProcessor {
       case 'slipEnd':
         if (this.slipping) {
           this.slipping = false;
-          if (m.jump !== false) { this.pos = Math.min(this.shadow, this.len - 1); if (this.scratch) this.scratchTarget = this.pos; }
+          if (m.jump !== false) {
+            const to = Math.min(this.shadow, this.len - 1);
+            const n = Math.round(this.slipRelease * sampleRate);
+            if (n > 0 && this.playing && !this.scratch && Math.abs(to - this.pos) > 64) { this.xfPos = this.pos; this.xfN = this.xfLen = n; }
+            this.pos = to;
+            if (this.scratch) this.scratchTarget = this.pos;
+          }
         }
         break;
+      case 'slipRelease': this.slipRelease = Math.max(0, Math.min(1, +m.v || 0)); break;
       case 'keylock': this.keylock = !!m.v; break;
       case 'semis': this.semis = m.v; break;
       case 'motor': this.startT = Math.max(0.002, m.start); this.stopT = Math.max(0.002, m.stop); break;
     }
+  }
+
+  // Muestra estéreo en una posición (con stems, su suma con las ganancias actuales)
+  readAt(pos, out) {
+    if (this.stems) {
+      let l = 0, r = 0;
+      for (let k = 0; k < this.stems.length; k++) {
+        const g = this.sg[k]; if (g < 1e-4) continue;
+        const st = this.stems[k];
+        l += g * hermite16(st.L, pos, this.stemLen); r += g * hermite16(st.R, pos, this.stemLen);
+      }
+      out[0] = l; out[1] = r;
+    } else { out[0] = hermite(this.L, pos, this.len); out[1] = hermite(this.R, pos, this.len); }
   }
 
   process(_inputs, outputs) {
@@ -226,6 +251,7 @@ class DeckProcessor extends AudioWorkletProcessor {
     const tmp = this.tmp;
     const shadowStep = this.playing ? this.rate * ratio : 0;
 
+    const tmp2 = this.tmp2;
     for (let i = 0; i < n; i++) {
       const s = prev + (this.cur - prev) * (i / n);
       let l, r;
@@ -242,6 +268,14 @@ class DeckProcessor extends AudioWorkletProcessor {
       } else {
         l = hermite(L, this.pos, len);
         r = hermite(R, this.pos, len);
+      }
+      // retorno del slip: la cabeza vieja sigue sonando y se funde con la nueva (potencia constante)
+      if (this.xfN > 0) {
+        this.readAt(this.xfPos, tmp2);
+        const g = 1 - this.xfN / this.xfLen, a = Math.sin(g * Math.PI / 2), b = Math.cos(g * Math.PI / 2);
+        l = l * a + tmp2[0] * b; r = r * a + tmp2[1] * b;
+        this.xfPos = Math.max(0, Math.min(len - 1, this.xfPos + s * ratio));
+        this.xfN--;
       }
       // pitch-shifter (siempre alimentado para tener la línea de retardo lista)
       if (wantPS || this.psMix > 0) {

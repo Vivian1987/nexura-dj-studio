@@ -19,10 +19,17 @@ function newTrack(info) {
     bpm: info.bpm ? parseFloat(info.bpm) || null : null, firstBeat: 0,
     key: info.key || '', camelot: '', keyTonic: null, keyMinor: null,
     duration: 0, size: info.size || 0, rmsDb: null,
-    cues: Array(8).fill(null), loops: Array(8).fill(null),
+    cues: Array(8).fill(null), loops: Array(8).fill(null), cueLoops: Array(8).fill(null),
     added: Date.now(), plays: 0, lastPlayed: 0, analyzed: false, bpmLocked: false, keyLocked: false
   };
 }
+
+// Biblioteca protegida (settings.protectLibrary): qué no se puede hacer y el aviso que se muestra
+const PROTECTED = {
+  remove: 'borrar pistas', crate: 'crear, borrar, renombrar u ordenar crates', crateTracks: 'añadir o quitar pistas de las crates',
+  smart: 'crear, editar o borrar smart crates', tags: 'editar etiquetas ni valoraciones', grid: 'cambiar el BPM ni el beatgrid'
+};
+export const CRATE_SORTS = { custom: 'Personalizado (arrastrar)', alpha: 'Alfabético', created: 'Fecha de creación' };
 
 export class Library extends Emitter {
   constructor() {
@@ -34,7 +41,16 @@ export class Library extends Emitter {
     this.prepare = [];
     this.ytPlaylists = [];
     this.session = null;
+    this.protected = false;   // lo fija la app desde settings.protectLibrary
+    this._byPath = null;      // índice ruta → pista (las pistas relocalizadas conservan su id antiguo)
     this.saveSoon = debounce(() => this.save(), 800);
+  }
+
+  // Comprobación central de «Proteger biblioteca»: devuelve false (y avisa) si la acción no está permitida
+  guard(kind) {
+    if (!this.protected || !PROTECTED[kind]) return true;
+    this.emit('protected', `Biblioteca protegida: no se puede ${PROTECTED[kind]}. Quita el candado 🔒 para hacer cambios.`);
+    return false;
   }
 
   async load() {
@@ -44,6 +60,7 @@ export class Library extends Emitter {
       for (const t of d.tracks || []) {
         t.cues = t.cues || Array(8).fill(null);
         t.loops = t.loops || Array(8).fill(null);
+        if (t.source === 'local' && !t.cueLoops) t.cueLoops = Array(8).fill(null);
         // recalcular la energía de pistas analizadas con una fórmula anterior (sin volver a analizar el audio)
         if (t.energyCurve && t.rmsDb != null && t.energyV !== ENERGY_VERSION) { t.energy = energyFrom(t.rmsDb, t.bpm, t.energyCurve); t.energyV = ENERGY_VERSION; migrated = true; }
         this.tracks.set(t.id, t);
@@ -72,16 +89,22 @@ export class Library extends Emitter {
   }
 
   get(id) { return this.tracks.get(id); }
+  // Pista por ruta: primero por id (hash de la ruta) y, si no, por la ruta guardada (pistas relocalizadas)
+  byPath(p) {
+    const t = this.tracks.get(hashId(p));
+    if (t) return t;
+    if (!this._byPath) { this._byPath = new Map(); for (const x of this.tracks.values()) if (x.path) this._byPath.set(x.path.toLowerCase(), x); }
+    return this._byPath.get(String(p).toLowerCase()) || null;
+  }
 
   addFiles(infos, crateId = null) {
     const added = [];
     for (const info of infos) {
-      const id = hashId(info.path);
-      let t = this.tracks.get(id);
-      if (!t) { t = newTrack(info); this.tracks.set(id, t); }
+      let t = this.byPath(info.path);
+      if (!t) { t = newTrack(info); this.tracks.set(t.id, t); if (this._byPath) this._byPath.set(t.path.toLowerCase(), t); }
       added.push(t);
     }
-    if (crateId) this.addToCrate(crateId, added.map(t => t.id));
+    if (crateId && this.guard('crateTracks')) this.addToCrate(crateId, added.map(t => t.id));
     this.saveSoon();
     this.emit('change');
     return added;
@@ -122,41 +145,103 @@ export class Library extends Emitter {
     this.saveSoon();
     this.emit('track', t);
   }
+  // Cambios hechos a mano por el usuario (etiquetas, valoración, explicit): respetan la protección
+  editTrack(id, patch) { if (!this.guard('tags')) return false; this.update(id, patch); return true; }
+  setRating(ids, rating) {
+    if (!this.guard('tags')) return false;
+    const r = Math.max(0, Math.min(5, Math.round(rating) || 0));
+    for (const id of ids) { const t = this.tracks.get(id); if (t) t.rating = r; }
+    this.saveSoon(); this.emit('change');
+    return true;
+  }
+  setExplicit(ids, on) {
+    if (!this.guard('tags')) return false;
+    for (const id of ids) { const t = this.tracks.get(id); if (t) t.explicit = !!on; }
+    this.saveSoon(); this.emit('change');
+    return true;
+  }
 
   remove(ids) {
+    if (!this.guard('remove')) return false;
     for (const id of ids) this.tracks.delete(id);
     for (const c of this.crates) c.ids = c.ids.filter(i => !ids.includes(i));
     this.prepare = this.prepare.filter(i => !ids.includes(i));
     for (const p of this.ytPlaylists) p.ids = p.ids.filter(i => !ids.includes(i));
+    this._byPath = null;
     this.saveSoon();
     this.emit('change');
+    return true;
+  }
+
+  // Relocalizar: cambia la ruta conservando el id (crates, Prepare, historial, formas de onda, stems,
+  // cues y beatgrid siguen apuntando a la misma pista). moves: [{ id, path, size? }]
+  relocate(moves) {
+    let n = 0;
+    for (const m of moves) {
+      const t = this.tracks.get(m.id);
+      if (!t || !m.path) continue;
+      t.path = m.path;
+      if (m.size) t.size = m.size;
+      n++;
+    }
+    this._byPath = null;
+    if (n) { this.saveSoon(); this.emit('change'); }
+    return n;
   }
 
   // --- Crates
-  createCrate(name) { const c = { id: uid(), name, ids: [] }; this.crates.push(c); this.saveSoon(); this.emit('change'); return c; }
-  renameCrate(id, name) { const c = this.crates.find(c => c.id === id); if (c) { c.name = name; this.saveSoon(); this.emit('change'); } }
-  deleteCrate(id) { this.crates = this.crates.filter(c => c.id !== id); this.saveSoon(); this.emit('change'); }
-  addToCrate(id, ids) {
-    const c = this.crates.find(c => c.id === id);
-    if (!c) return;
-    for (const i of ids) if (!c.ids.includes(i)) c.ids.push(i);
+  // (las crates antiguas no tienen «created»: se ordenan por su posición, que es el orden en que se crearon)
+  createCrate(name) {
+    if (!this.guard('crate')) return null;
+    const c = { id: uid(), name, ids: [], created: Date.now() };
+    this.crates.push(c); this.saveSoon(); this.emit('change'); return c;
+  }
+  renameCrate(id, name) { if (!this.guard('crate')) return; const c = this.crates.find(c => c.id === id); if (c) { c.name = name; this.saveSoon(); this.emit('change'); } }
+  deleteCrate(id) { if (!this.guard('crate')) return false; this.crates = this.crates.filter(c => c.id !== id); this.saveSoon(); this.emit('change'); return true; }
+  setCrateColor(id, color) { if (!this.guard('crate')) return; const c = this.crates.find(c => c.id === id); if (c) { c.color = color || null; this.saveSoon(); this.emit('change'); } }
+  // Orden personalizado: mueve la crate «id» delante de «beforeId» (o al final)
+  moveCrate(id, beforeId) {
+    if (!this.guard('crate') || id === beforeId) return;
+    const i = this.crates.findIndex(c => c.id === id);
+    if (i < 0) return;
+    const [c] = this.crates.splice(i, 1);
+    const j = beforeId ? this.crates.findIndex(x => x.id === beforeId) : -1;
+    if (j < 0) this.crates.push(c); else this.crates.splice(j, 0, c);
     this.saveSoon(); this.emit('change');
   }
+  sortedCrates(mode = 'custom') {
+    const list = this.crates.map((c, i) => ({ c, i }));
+    if (mode === 'alpha') list.sort((a, b) => a.c.name.localeCompare(b.c.name, 'es', { numeric: true, sensitivity: 'base' }));
+    else if (mode === 'created') list.sort((a, b) => (a.c.created || 0) - (b.c.created || 0) || a.i - b.i);
+    return list.map(x => x.c);
+  }
+  cratesOf(id) { return this.crates.filter(c => c.ids.includes(id)); }
+  addToCrate(id, ids) {
+    if (!this.guard('crateTracks')) return false;
+    const c = this.crates.find(c => c.id === id);
+    if (!c) return false;
+    for (const i of ids) if (!c.ids.includes(i)) c.ids.push(i);
+    this.saveSoon(); this.emit('change');
+    return true;
+  }
   removeFromCrate(id, ids) {
+    if (!this.guard('crateTracks')) return;
     const c = this.crates.find(c => c.id === id);
     if (!c) return;
     c.ids = c.ids.filter(i => !ids.includes(i));
     this.saveSoon(); this.emit('change');
   }
-  deleteYtPlaylist(id) { this.ytPlaylists = this.ytPlaylists.filter(p => p.id !== id); this.saveSoon(); this.emit('change'); }
+  deleteYtPlaylist(id) { if (!this.guard('crate')) return false; this.ytPlaylists = this.ytPlaylists.filter(p => p.id !== id); this.saveSoon(); this.emit('change'); return true; }
 
   // --- Smart crates
   saveSmart(sc) {
+    if (!this.guard('smart')) return false;
     const i = this.smart.findIndex(s => s.id === sc.id);
     if (i >= 0) this.smart[i] = sc; else this.smart.push({ ...sc, id: sc.id || uid() });
     this.saveSoon(); this.emit('change');
+    return true;
   }
-  deleteSmart(id) { this.smart = this.smart.filter(s => s.id !== id); this.saveSoon(); this.emit('change'); }
+  deleteSmart(id) { if (!this.guard('smart')) return false; this.smart = this.smart.filter(s => s.id !== id); this.saveSoon(); this.emit('change'); return true; }
   matchRule(t, r) {
     let v = t[r.field];
     if (r.field === 'added') v = (Date.now() - (t.added || 0)) / 86400000;
@@ -197,6 +282,19 @@ export class Library extends Emitter {
     this.saveSoon();
     this.emit('change');
   }
+  // Pistas marcadas como tocadas en una sesión (por defecto la actual), sin las anteriores a un reinicio
+  playedIds(sessionId = null) {
+    const s = sessionId ? this.history.find(h => h.id === sessionId) : this.session;
+    if (!s) return new Set();
+    const from = s.resetAt || 0;
+    return new Set(s.entries.filter(e => e.time > from).map(e => e.id));
+  }
+  // «Reiniciar pistas tocadas»: quita la marca de una sesión o de todas (el historial no se borra)
+  resetPlayed(sessionId = null) {
+    const now = Date.now();
+    for (const h of this.history) if (!sessionId || h.id === sessionId) h.resetAt = now;
+    this.saveSoon(); this.emit('change');
+  }
   historyCsv(sessionId) {
     const s = this.history.find(h => h.id === sessionId);
     if (!s) return '';
@@ -228,7 +326,7 @@ export class Library extends Emitter {
     if (q) {
       const tokens = q.split(/\s+/);
       list = list.filter(t => {
-        const hay = `${t.title} ${t.artist} ${t.album} ${t.genre} ${t.comment} ${t.key} ${t.camelot} ${t.bpm ? Math.round(t.bpm) : ''}`.toLowerCase();
+        const hay = `${t.title} ${t.artist} ${t.album} ${t.genre} ${t.comment} ${t.key} ${t.camelot} ${t.year || ''} ${t.bpm ? Math.round(t.bpm) : ''}`.toLowerCase();
         return tokens.every(tok => hay.includes(tok));
       });
     }
@@ -237,6 +335,8 @@ export class Library extends Emitter {
       list = list.slice().sort((a, b) => {
         let x = a[f], y = b[f];
         if (f === 'camelot') { x = camelotSortKey(x); y = camelotSortKey(y); }
+        if (f === 'explicit') { x = a.explicit ? 1 : 0; y = b.explicit ? 1 : 0; return (y - x) * d; }
+        if (f === 'rating') { x = a.rating || 0; y = b.rating || 0; return (y - x) * d; }
         if (x == null || x === '') return 1;
         if (y == null || y === '') return -1;
         return (typeof x === 'number' && typeof y === 'number' ? x - y : String(x).localeCompare(String(y), 'es', { numeric: true })) * d;

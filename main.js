@@ -2,7 +2,7 @@
 // © NexuraIA
 'use strict';
 
-const { app, BrowserWindow, ipcMain, dialog, shell, session, safeStorage, Menu } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, shell, session, safeStorage, Menu, nativeImage } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const fsp = fs.promises;
@@ -188,6 +188,72 @@ async function readTags(filePath) {
   return tags;
 }
 
+// Carátula: APIC (ID3v2.3/2.4), PIC (ID3v2.2) o bloque PICTURE de FLAC → { mime, data } o null
+function id3Pictures(tag, ver) {
+  const pics = [];
+  const idLen = ver === 2 ? 3 : 4, hdrLen = ver === 2 ? 6 : 10;
+  let p = 0;
+  while (p + hdrLen < tag.length) {
+    const id = tag.toString('latin1', p, p + idLen);
+    if (!/^[A-Z0-9]+$/.test(id)) break;
+    let fsize;
+    if (ver === 2) fsize = (tag[p + 3] << 16) | (tag[p + 4] << 8) | tag[p + 5];
+    else if (ver === 4) fsize = (tag[p + 4] << 21) | (tag[p + 5] << 14) | (tag[p + 6] << 7) | tag[p + 7];
+    else fsize = tag.readUInt32BE(p + 4);
+    if (fsize <= 0) break;
+    if (id === 'APIC' || id === 'PIC') {
+      const b = tag.slice(p + hdrLen, p + hdrLen + fsize);
+      const enc = b[0];
+      let q = 1, mime;
+      if (id === 'PIC') { mime = 'image/' + b.toString('latin1', 1, 4).toLowerCase().replace('jpg', 'jpeg'); q = 4; }
+      else { const z = b.indexOf(0, 1); mime = b.toString('latin1', 1, z); q = z + 1; }
+      const type = b[q]; q++;
+      // descripción terminada en 0 (dos ceros alineados en UTF-16)
+      if (enc === 1 || enc === 2) { while (q + 1 < b.length && !(b[q] === 0 && b[q + 1] === 0)) q += 2; q += 2; }
+      else { while (q < b.length && b[q] !== 0) q++; q++; }
+      if (q < b.length) pics.push({ type, mime: mime || 'image/jpeg', data: b.slice(q) });
+    }
+    p += hdrLen + fsize;
+  }
+  return pics;
+}
+async function readCover(filePath) {
+  let fh;
+  try {
+    fh = await fsp.open(filePath, 'r');
+    const head = Buffer.alloc(10);
+    await fh.read(head, 0, 10, 0);
+    let pics = [];
+    if (head.toString('latin1', 0, 3) === 'ID3') {
+      const size = (head[6] << 21) | (head[7] << 14) | (head[8] << 7) | head[9];
+      const tag = Buffer.alloc(Math.min(size, 16 * 1024 * 1024));
+      await fh.read(tag, 0, tag.length, 10);
+      pics = id3Pictures(tag, head[3]);
+    } else if (head.toString('latin1', 0, 4) === 'fLaC') {
+      let pos = 4;
+      for (let guard = 0; guard < 64; guard++) {
+        const bh = Buffer.alloc(4);
+        await fh.read(bh, 0, 4, pos);
+        const last = bh[0] & 0x80, type = bh[0] & 0x7F, len = (bh[1] << 16) | (bh[2] << 8) | bh[3];
+        if (type === 6 && len < 16 * 1024 * 1024) {
+          const b = Buffer.alloc(len);
+          await fh.read(b, 0, len, pos + 4);
+          let q = 0;
+          const ptype = b.readUInt32BE(q); q += 4;
+          const ml = b.readUInt32BE(q); q += 4; const mime = b.toString('latin1', q, q + ml); q += ml;
+          const dl = b.readUInt32BE(q); q += 4 + dl + 16;
+          const n = b.readUInt32BE(q); q += 4;
+          pics.push({ type: ptype, mime, data: b.slice(q, q + n) });
+        }
+        pos += 4 + len;
+        if (last) break;
+      }
+    }
+    return pics.find(x => x.type === 3) || pics[0] || null; // 3 = portada
+  } catch (_) { return null; }
+  finally { if (fh) await fh.close().catch(() => {}); }
+}
+
 async function fileInfo(filePath) {
   const st = await fsp.stat(filePath);
   const tags = await readTags(filePath);
@@ -289,7 +355,22 @@ async function ytAccessToken() {
 // ---------------------------------------------------------------------------
 const { spawn } = require('child_process');
 const STEM_NAMES = ['drums', 'bass', 'other', 'vocals'];
-const stemsTool = () => path.join(__dirname, 'tools', 'stems');
+// El motor necesita una carpeta con permiso de escritura (uv crea ahí su .venv): en la app instalada
+// los archivos van dentro del paquete (resources/stems), así que se copian a E:\IA\nexura-stems si
+// existe E:\IA o a los datos de la app. Con «npm start» se usa la misma carpeta: un solo entorno.
+const stemsSource = () => (app.isPackaged ? path.join(process.resourcesPath, 'stems') : path.join(__dirname, 'tools', 'stems'));
+function stemsTool() {
+  const dir = process.platform === 'win32' && fs.existsSync('E:\\IA') ? 'E:\\IA\\nexura-stems' : path.join(dataDir(), 'stems-engine');
+  try {
+    fs.mkdirSync(dir, { recursive: true });
+    for (const f of ['pyproject.toml', 'separate.py']) {
+      const src = path.join(stemsSource(), f), dst = path.join(dir, f);
+      const a = fs.readFileSync(src);
+      if (!fs.existsSync(dst) || !a.equals(fs.readFileSync(dst))) fs.writeFileSync(dst, a);
+    }
+  } catch (e) { console.warn('stems tool', e.message); }
+  return dir;
+}
 const stemsPython = () => path.join(stemsTool(), '.venv', process.platform === 'win32' ? 'Scripts/python.exe' : 'bin/python');
 // Carpeta por defecto: E:\IA\stems si existe E:\IA (SSD de modelos), si no dentro de los datos de la app
 function defaultStemsDir() {
@@ -472,6 +553,67 @@ function registerIpc() {
     return new Uint8Array(buf.buffer, buf.byteOffset, buf.byteLength);
   });
   ipcMain.handle('fs:exists', async (_e, p) => { try { await fsp.access(p); return true; } catch (_) { return false; } });
+  // Comprobación por lotes de archivos perdidos: [ruta] → [true/false]
+  ipcMain.handle('fs:existsMany', async (_e, paths) => Promise.all((paths || []).slice(0, 2000).map(p => fsp.access(String(p)).then(() => true, () => false))));
+
+  // Listas .m3u / .m3u8 (botón de la barra lateral de la biblioteca): devuelve sus bytes
+  ipcMain.handle('dialog:openPlaylist', async () => {
+    const r = await dialog.showOpenDialog(mainWindow, {
+      title: 'Importar lista M3U', properties: ['openFile', 'multiSelections'],
+      filters: [{ name: 'Listas M3U', extensions: ['m3u', 'm3u8'] }]
+    });
+    if (r.canceled) return null;
+    const out = [];
+    for (const p of r.filePaths) {
+      const st = await fsp.stat(p);
+      if (st.size > 50 * 1024 * 1024) throw new Error('Lista demasiado grande: ' + path.basename(p));
+      const buf = await fsp.readFile(p);
+      out.push({ path: p, name: path.basename(p), data: new Uint8Array(buf.buffer, buf.byteOffset, buf.byteLength) });
+    }
+    return out;
+  });
+
+  // Relocalizar archivos perdidos: el usuario elige una carpeta y se buscan (en subcarpetas) los
+  // archivos con esos nombres. Devuelve { dir, files: [{ path, size }] } o null si cancela.
+  ipcMain.handle('dialog:findFiles', async (_e, names) => {
+    const r = await dialog.showOpenDialog(mainWindow, { title: 'Carpeta donde buscar los archivos perdidos', properties: ['openDirectory'] });
+    if (r.canceled || !r.filePaths[0]) return null;
+    const want = new Set((names || []).map(n => String(n).toLowerCase()));
+    const files = [];
+    let seen = 0;
+    const walk = async (dir, depth) => {
+      if (depth > 16 || seen > 500000) return;
+      let entries = [];
+      try { entries = await fsp.readdir(dir, { withFileTypes: true }); } catch (_) { return; }
+      for (const e of entries) {
+        const full = path.join(dir, e.name);
+        if (e.isDirectory()) { if (!e.name.startsWith('.') && !e.name.startsWith('$')) await walk(full, depth + 1); continue; }
+        seen++;
+        if (!want.has(e.name.toLowerCase())) continue;
+        try { files.push({ path: full, size: (await fsp.stat(full)).size }); } catch (_) { /* skip */ }
+      }
+    };
+    await walk(r.filePaths[0], 0);
+    return { dir: r.filePaths[0], files };
+  });
+
+  // Carátula en miniatura (JPEG de 96 px como data: URL) con caché en userData/data/art
+  ipcMain.handle('art:get', async (_e, id, p) => {
+    if (!/^[a-z0-9_-]+$/i.test(String(id || '')) || !p) return null;
+    const dir = path.join(dataDir(), 'art');
+    const jpg = path.join(dir, id + '.jpg'), none = path.join(dir, id + '.none');
+    try { return 'data:image/jpeg;base64,' + (await fsp.readFile(jpg)).toString('base64'); } catch (_) { /* sin caché */ }
+    if (fs.existsSync(none)) return null;
+    await fsp.mkdir(dir, { recursive: true });
+    const pic = await readCover(p);
+    let img = pic ? nativeImage.createFromBuffer(pic.data) : null;
+    if (!img || img.isEmpty()) { if (fs.existsSync(p)) await fsp.writeFile(none, ''); return null; }
+    const { width, height } = img.getSize(), k = 96 / Math.max(width, height, 1);
+    if (k < 1) img = img.resize({ width: Math.max(1, Math.round(width * k)), height: Math.max(1, Math.round(height * k)), quality: 'good' });
+    const out = img.toJPEG(82);
+    await fsp.writeFile(jpg, out);
+    return 'data:image/jpeg;base64,' + out.toString('base64');
+  });
 
   ipcMain.handle('store:get', async (_e, name) => {
     if (!/^[a-z0-9_-]+$/i.test(name)) return null;

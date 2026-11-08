@@ -53,7 +53,8 @@ input, textarea { user-select: text; }
 /* 2. Disposición general --------------------------------------------------- */
 #app { display: flex; flex-direction: column; height: 100vh; gap: 6px; padding: 6px; background: var(--bg); overflow-x: hidden; overflow-y: auto; }
 #topbar, #waves, #dj-layout, #fxbar, #sampler, #statusbar { flex: none; }
-#library { flex: 1 1 auto; min-height: 220px; }
+/* La biblioteca ocupa el resto, pero nunca menos de ~8 filas: si no cabe, #app hace scroll vertical */
+#library { flex: 1 1 auto; min-height: 302px; }
 #statusbar { height: 18px; }
 
 #topbar { height: 36px; display: flex; align-items: center; gap: 6px; }
@@ -112,8 +113,8 @@ input:focus, select:focus { border-color: var(--accent); }
 .knob-val:empty { display: none; }
 
 .fader { position: relative; touch-action: none; cursor: pointer; flex: none; }
-.fader.vertical { width: 30px; }
-.fader.horizontal { height: 30px; }
+.fader.vertical { width: 30px; height: var(--len); }
+.fader.horizontal { height: 30px; width: var(--len); }
 .fader-slot { position: absolute; background: var(--wave-bg); border: 1px solid var(--line2); border-radius: 4px; }
 .fader.vertical .fader-slot { left: 12px; width: 6px; top: 0; bottom: 0; }
 .fader.horizontal .fader-slot { top: 12px; height: 6px; left: 0; right: 0; }
@@ -293,7 +294,7 @@ body:not([data-wave-layout="deck"]) .deck-clock { width: auto; height: auto; fle
 .smp-vol { flex: 1; min-width: 0; accent-color: var(--accent); height: 12px; }
 
 /* 9. Biblioteca ------------------------------------------------------------ */
-#library { display: grid; grid-template-columns: var(--side-w, 230px) minmax(0, 1fr); gap: 6px; min-height: 0; position: relative; }
+#library { display: grid; grid-template-columns: var(--side-w, 230px) minmax(0, 1fr); gap: 6px; position: relative; --lib-max: 99; }
 .lib-side { background: var(--lib); border: 1px solid var(--line); border-radius: var(--radius); overflow: auto; padding: 6px 0; outline: none; }
 #library.side-focus .lib-side { border-color: var(--accent); }
 .lib-side-toggle { display: none; }
@@ -316,15 +317,15 @@ body:not([data-wave-layout="deck"]) .deck-clock { width: auto; height: auto; fle
 .view-title { font-weight: 700; white-space: nowrap; max-width: 220px; overflow: hidden; text-overflow: ellipsis; }
 .search { flex: 1; min-width: 160px; }
 .count { color: var(--dim); font-size: 11px; white-space: nowrap; }
-.lib-head, .row-t { --lib-cols: 30px minmax(160px, 2.2fr) minmax(120px, 1.5fr) 62px 52px 70px minmax(80px, 1fr) 96px 48px 88px; }
 .lib-head { display: grid; padding: 0 8px; border-bottom: 1px solid var(--panel3); background: var(--panel2); }
 .th { padding: 5px 6px; font-size: 10px; font-weight: 700; color: var(--muted); letter-spacing: .04em; cursor: pointer; white-space: nowrap; overflow: hidden; }
 .th.sorted { color: #fff; }
+.th.center { text-align: center; }
 .th.sorted::after { content: " " attr(data-dir); font-size: 8px; color: var(--accent); }
 .lib-scroll { flex: 1; overflow: auto; position: relative; outline: none; }
 .lib-spacer { width: 1px; }
 .lib-rows { position: absolute; left: 0; right: 0; top: 0; }
-.row-t { position: absolute; left: 0; right: 0; height: 28px; display: grid; align-items: center; padding: 0 8px; cursor: default; }
+.row-t { position: absolute; left: 0; right: 0; height: var(--row-h, 28px); display: grid; align-items: center; padding: 0 8px; cursor: default; }
 .row-t > span { padding: 0 6px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: 12px; }
 .row-t.odd { background: rgba(120, 170, 255, .035); }
 .row-t:hover:not(.sel) { background: rgba(255, 255, 255, .05); }
@@ -335,6 +336,24 @@ body:not([data-wave-layout="deck"]) .deck-clock { width: auto; height: auto; fle
 .row-t .dim { color: var(--dim); }
 .row-t .key.compat { color: var(--ok); font-weight: 700; }
 .row-t.yt .st { color: #d9534a; }
+.row-t.missing > span:not(.st) { opacity: .45; text-decoration: line-through; text-decoration-color: rgba(240, 72, 72, .6); }
+.st.missing { color: #fff; background: var(--err); border-radius: 3px; }
+.row-t .rating { display: flex; gap: 1px; color: var(--line2); font-size: 12px; cursor: pointer; }
+.row-t .rating i { font-style: normal; }
+.row-t .rating i.on { color: #ffd21a; }
+.row-t .rating:hover i { color: #6d5a12; }
+.row-t .rating:hover i.on { color: #ffd21a; }
+.row-t .c-explicit { text-align: center; }
+.c-explicit b { display: inline-block; font-size: 9px; line-height: 14px; width: 14px; text-align: center; border-radius: 2px; background: #c8d8f5; color: #000; }
+.row-t .c-art { padding: 0 3px; display: flex; align-items: center; justify-content: center; height: 100%; }
+.c-art img, .c-art i { width: calc(var(--art-w, 30px) - 6px); height: calc(var(--art-w, 30px) - 6px); max-height: calc(var(--row-h, 28px) - 4px); object-fit: cover; border-radius: 3px; }
+.c-art i { display: flex; align-items: center; justify-content: center; font-style: normal; color: var(--dim); background: var(--panel2); font-size: 10px; }
+.btn.lib-lock.on { border-color: var(--warn); background: color-mix(in srgb, var(--warn) 22%, var(--panel3)); }
+.crates-of-list { list-style: none; margin: 0 0 8px; padding: 0; display: flex; flex-direction: column; gap: 2px; min-width: 320px; }
+.crates-of-list li { display: flex; align-items: center; gap: 8px; padding: 6px 8px; border-radius: var(--radius); cursor: pointer; }
+.crates-of-list li:hover { background: var(--accent-soft); }
+.crates-of-list small { margin-left: auto; color: var(--dim); }
+.side-item[draggable="true"] { cursor: grab; }
 .st { text-align: center; font-size: 10px; color: var(--dim); font-weight: 800; }
 .st.deck0 { color: #fff; background: var(--deck0); border-radius: 3px; }
 .st.deck1 { color: #fff; background: var(--deck1); border-radius: 3px; }
@@ -435,7 +454,7 @@ kbd { font: 11px var(--mono); background: var(--panel3); border: 1px solid var(-
 /* La fila de efectos se oculta y se despliega con el botón ☰ */
 body.laptop-mode .topbar-menu-toggle { display: inline-block; }
 body.laptop-mode:not(.topbar-expanded) #fxbar { display: none; }
-body.laptop-mode #waves { grid-template-rows: 54px 54px; }
+body.laptop-mode #waves { grid-template-rows: 40px 40px; gap: 2px; }
 body.laptop-mode .platter-wrap { width: 140px; height: 140px; }
 body.laptop-mode .deck-body { grid-template-columns: 42px 140px minmax(0, 1fr); }
 body.laptop-mode .deck.d0 .deck-body { grid-template-columns: minmax(0, 1fr) 140px 42px; }
@@ -480,8 +499,7 @@ body.laptop-mode #app.side-expanded .lib-side { display: block; }
   .clock { display: none; }
   .fxunit { gap: 6px; }
   .fx-slots { gap: 5px; }
-  .lib-head, .row-t { --lib-cols: 30px minmax(150px, 2fr) minmax(110px, 1.3fr) 58px 50px 66px minmax(70px, 1fr) 84px; }
-  .lib-head > :nth-child(n+9), .row-t > :nth-child(n+9) { display: none; }
+  #library { --lib-max: 8; }
 }
 /* Ancho ≤ 1100: el mezclador pasa debajo de los decks; efectos y sampler en menos columnas */
 @media (max-width: 1100px) {
@@ -494,9 +512,7 @@ body.laptop-mode #app.side-expanded .lib-side { display: block; }
   .mixer > .xf-row, .mixer > .cue-route { flex-basis: 100%; }
   #fxbar { grid-template-columns: minmax(0, 1fr); }
   .sampler-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); }
-  #library { grid-template-columns: var(--side-w, 180px) minmax(0, 1fr); }
-  .lib-head, .row-t { --lib-cols: 30px minmax(140px, 2fr) minmax(100px, 1.3fr) 56px 48px 64px; }
-  .lib-head > :nth-child(n+7), .row-t > :nth-child(n+7) { display: none; }
+  #library { grid-template-columns: var(--side-w, 180px) minmax(0, 1fr); --lib-max: 6; }
   #topbar { height: auto; min-height: 36px; flex-wrap: wrap; }
   #top-right { flex-wrap: wrap; justify-content: flex-end; row-gap: 4px; }
   .status-pill { max-width: 150px; overflow: hidden; text-overflow: ellipsis; }
@@ -511,33 +527,41 @@ body.laptop-mode #app.side-expanded .lib-side { display: block; }
   .sampler-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .fx-slots { grid-template-columns: minmax(0, 1fr); }
   .fxunit { height: auto; grid-template-columns: minmax(0, 1fr); }
-  #library { grid-template-columns: minmax(0, 1fr); }
+  #library { grid-template-columns: minmax(0, 1fr); --lib-max: 5; --col-min-title: 0px; --col-min-text: 0px; }
   .lib-side { display: none; }
   .lib-side-toggle { display: inline-block; }
   #app.side-expanded #library { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto 1fr; }
   #app.side-expanded .lib-side { display: block; max-height: 220px; }
   .lib-toolbar { flex-wrap: wrap; }
-  .lib-head, .row-t { --lib-cols: 26px minmax(0, 2fr) minmax(0, 1fr) 50px 44px; }
-  .lib-head > :nth-child(n+6), .row-t > :nth-child(n+6) { display: none; }
   .logo { font-size: 10px; }
   .wave-layout-toggle { display: none; }
 }
-/* Alto ≤ 900 */
+/* Alto ≤ 900 (p. ej. 1920×1080 al 125 %): efectos plegados tras ☰, formas de onda y mezclador más bajos
+   para que la biblioteca conserve ~8 filas sin scroll */
 @media (max-height: 900px) {
-  #waves { grid-template-rows: 56px 56px; }
+  .topbar-menu-toggle { display: inline-block; }
+  body:not(.topbar-expanded) #fxbar { display: none; }
+  #app { gap: 4px; padding: 4px; }
+  #waves { grid-template-rows: 40px 40px; gap: 2px; }
   .pad { height: 30px; }
   .deck-detail-wave { height: 60px; }
   .deck-clock { width: 54px; height: 54px; }
   .deck-wave-panel { grid-template-columns: 54px minmax(0, 1fr) 54px; }
   .overview { height: 28px; }
-}
-/* Alto ≤ 820 (portátiles): efectos plegados tras ☰ y todo más compacto */
-@media (max-height: 820px) {
-  .topbar-menu-toggle { display: inline-block; }
-  body:not(.topbar-expanded) #fxbar { display: none; }
-  #app { gap: 4px; padding: 4px; }
-  #waves { grid-template-rows: 44px 44px; gap: 2px; }
   .deck { padding: 6px; gap: 4px; }
+  /* mezclador: knobs de 28 px, faders de canal y vúmetros más cortos */
+  .mixer { padding: 6px; gap: 4px; }
+  .mixer .knob svg { width: 28px; height: 28px; }
+  .mixer .knob-label { font-size: 8.5px; line-height: 10px; }
+  .mixer .fader.chfader { height: 88px; }
+  .meter.tall { height: 80px; }
+  .meter.tall .meter-fill { --mh: 80px; }
+  .btn.pfl { padding-block: 3px; }
+  /* EN DECK: el pitch se acorta para que el deck no supere al mezclador */
+  body[data-wave-layout="deck"] .fader.pitch { height: 166px; }
+}
+/* Alto ≤ 820 (portátiles): todo más compacto */
+@media (max-height: 820px) {
   .pad { height: 26px; }
   .pad-tab { padding: 2px; }
   .platter-wrap { width: 120px; height: 120px; }
@@ -546,8 +570,6 @@ body.laptop-mode #app.side-expanded .lib-side { display: block; }
   .transport .btn { height: 32px; font-size: 12px; }
   .overview { height: 24px; }
   .deck-detail-wave { height: 50px; }
-  .meter.tall { height: 76px; }
-  .strip .knob svg { width: 28px; height: 28px; }
 }
 /* El deck de YouTube mantiene siempre su columna de 200 px */
 @media (max-height: 820px), (max-width: 1500px) {
@@ -596,8 +618,8 @@ body.laptop-mode #app.side-expanded .lib-side { display: block; }
 .smp-vol { accent-color: var(--c); }
 .side-sec { color: #6f8fc4; }
 .row-t .c-title { color: #ffffff; }
-.row-t > span:nth-child(3) { color: #7fc4ff; }
-.row-t .num:nth-child(4) { color: #ffd166; }
+.row-t .c-artist { color: #7fc4ff; }
+.row-t .c-bpm { color: #ffd166; }
 .row-t.played .c-title { color: #7d93bb; }
 .row-t.sel { background: linear-gradient(90deg, #0f4f8f, #0b3a6b); }
 .lib-head .th { color: #7fa6e0; }
@@ -657,14 +679,14 @@ body.laptop-mode #app.side-expanded .lib-side { display: block; }
 .strip.s3 .strip-num { background: var(--deck3); color: #000; }
 body.four-decks #dj-layout { grid-template-columns: minmax(0, 1fr) 420px minmax(0, 1fr); }
 body.four-decks .mix-top { grid-template-columns: repeat(2, minmax(0, 1fr)) 76px repeat(2, minmax(0, 1fr)); }
-body.four-decks #waves { grid-template-rows: repeat(4, 42px); }
-body.four-decks.laptop-mode #waves { grid-template-rows: repeat(4, 34px); }
+body.four-decks #waves { grid-template-rows: repeat(4, 40px); }
+body.four-decks.laptop-mode #waves { grid-template-rows: repeat(4, 30px); gap: 2px; }
 @media (max-width: 1500px) { body.four-decks #dj-layout { grid-template-columns: minmax(0, 1fr) 380px minmax(0, 1fr); } }
 @media (max-width: 1100px) { body.four-decks #dj-layout { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 @media (max-width: 760px) { body.four-decks #dj-layout { grid-template-columns: minmax(0, 1fr); } }
 .st.deck2 { color: #000; background: var(--deck2); border-radius: 3px; }
 .st.deck3 { color: #000; background: var(--deck3); border-radius: 3px; }
-@media (max-height: 900px) { body.four-decks #waves { grid-template-rows: repeat(4, 30px); gap: 2px; } }
+@media (max-height: 900px) { body.four-decks #waves, body.four-decks.laptop-mode #waves { grid-template-rows: repeat(4, 22px); gap: 2px; } }
 
 /* ---- Tamaños ajustables de la biblioteca (barra lateral y columnas) */
 .lib-side-rs { position: absolute; top: 0; bottom: 0; width: 6px; cursor: col-resize; z-index: 5; border-radius: 3px; }

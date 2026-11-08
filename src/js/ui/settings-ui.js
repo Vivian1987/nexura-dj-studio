@@ -5,7 +5,7 @@ import { describeKey, REL_NAMES } from '../midi/midi.js';
 import { parseMixxxMapping } from '../midi/mixxx-import.js';
 import { MidiWizard } from './midi-wizard.js';
 
-const TABS = { audio: 'Audio', ai: '✨ IA', play: 'Reproducción', midi: 'MIDI / Controladores', expansions: 'Expansiones', youtube: 'YouTube', keys: 'Atajos', about: 'Acerca de' };
+const TABS = { audio: 'Audio', ai: '✨ IA', play: 'Reproducción', library: 'Biblioteca', midi: 'MIDI / Controladores', expansions: 'Expansiones', youtube: 'YouTube', keys: 'Atajos', about: 'Acerca de' };
 
 export class SettingsUI {
   constructor(app) { this.app = app; this.tab = 'audio'; }
@@ -140,7 +140,8 @@ export class SettingsUI {
       this.row('Rango de pitch por defecto', select({ 0.08: '±8 %', 0.16: '±16 %', 0.5: '±50 %' }, String(s.pitchRange), (v) => { app.setSetting('pitchRange', parseFloat(v)); app.decks.forEach(d => d.setRange(parseFloat(v))); })),
       this.row('Key lock activado al cargar', this.toggle('keylockDefault')),
       this.row('Cuantización (Q)', this.toggle('quantize'), 'Hot cues, loops y saltos se ajustan al beat'),
-      this.row('Cue Loops', this.toggle('cueLoops'), 'Con un loop activo, un hot cue vacío guarda el loop; al pulsarlo salta y lo activa'),
+      this.row('Cue Loops', this.toggle('cueLoops'), 'Con un loop activo, un hot cue vacío guarda el loop; al pulsarlo salta y lo activa. Hay además un modo de pads «Cue Loop» con 8 cues con loop propios'),
+      this.row('Retorno del slip (ms)', this.number('slipRelease', 0, 1000, 10), 'Al soltar el slip (scratch, roll, censor o loop), fundido hasta la posición en la que iría la pista. 0 = salto inmediato'),
       this.row('Sync con alineación de fase', this.toggle('syncPhase')),
       this.row('Auto-gain al cargar', this.toggle('autoGain'), 'Iguala el volumen según el análisis'),
       this.row('Al cargar sobre un deck que está sonando', select({ play: 'Sustituir y seguir sonando', pause: 'Sustituir y dejar en pausa', block: 'No permitir (proteger en directo)' }, s.loadOnPlaying || 'play', (v) => app.setSetting('loadOnPlaying', v)), 'Para directo puedes protegerlo y evitar cambiar por error la pista que suena'),
@@ -151,6 +152,17 @@ export class SettingsUI {
       this.row('Analizar al importar', this.toggle('autoAnalyze')),
       this.row('Rango de BPM mínimo', this.number('minBpm', 50, 120, 1)),
       this.row('Rango de BPM máximo', this.number('maxBpm', 100, 220, 1), 'Los BPM detectados se ajustan a este rango (× ½ / × 2)'));
+  }
+
+  page_library(p) {
+    const app = this.app, s = app.settings;
+    p.append(
+      el('h3', {}, 'Biblioteca'),
+      this.row('Proteger biblioteca', this.toggle('protectLibrary'), 'No se pueden borrar ni renombrar pistas, crates ni smart crates, ni editar etiquetas, valoraciones, BPM o beatgrid, ni mover pistas entre crates. Sí se puede cargar, buscar, ordenar, analizar pistas nuevas y usar Prepare e Historial. También con el candado 🔒 de la biblioteca'),
+      this.row('Mismas columnas en todos los crates', this.toggle('libColsSame'), 'Si lo desactivas, cada crate recuerda sus columnas (clic derecho en la cabecera de la tabla para elegirlas)'),
+      this.row('Tamaño de la carátula', select({ small: 'Pequeña', medium: 'Mediana' }, s.libArtSize || 'small', (v) => app.setSetting('libArtSize', v)), 'La columna «Carátula» está oculta por defecto'),
+      this.row('Orden de las crates', select({ custom: 'Personalizado (arrastrar)', alpha: 'Alfabético', created: 'Fecha de creación' }, s.crateSort || 'custom', (v) => { app.setSetting('crateSort', v); app.libraryUI.renderSide(); })),
+      this.row('Archivos perdidos', btn('Relocalizar archivos perdidos…', { cls: 'small', onClick: () => { app.closeModal(); app.relocateMissing(); } }), 'Busca en una carpeta las pistas que se han movido y conserva cues, beatgrid, valoración y crates'));
   }
 
   page_midi(p) {

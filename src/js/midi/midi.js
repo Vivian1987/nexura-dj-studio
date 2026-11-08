@@ -112,6 +112,10 @@ export function buildActions(app) {
       add(p + 'hotcue' + (i + 1), `Hot cue ${i + 1}`, 'button', (on) => (on ? d.hotcue(i) : d.hotcueRelease(i)), g, () => !!d.track?.cues?.[i]);
       add(p + 'hotcueclear' + (i + 1), `Borrar hot cue ${i + 1}`, 'button', press(() => d.deleteCue(i)), g);
     }
+    for (let i = 0; i < 8; i++) {
+      add(p + 'cueloop' + (i + 1), `Cue Loop ${i + 1}`, 'button', press(() => d.cueLoop(i)), g, () => !!d.track?.cueLoops?.[i]);
+      add(p + 'cueloopclear' + (i + 1), `Borrar Cue Loop ${i + 1}`, 'button', press(() => d.deleteCueLoop(i)), g);
+    }
     for (const m of PAD_MODES) add(p + 'mode.' + m, 'Modo de pads: ' + PAD_MODE_NAMES[m], 'button', press(() => d.setPadMode(m)), g, () => d.padMode === m);
     STEMS.forEach((st, k) => add(p + 'stem.' + st.key, 'Stem ' + st.name + ' (activar/silenciar)', 'button', press(() => d.toggleStem(k)), g, () => d.stemsOn && d.stemGains[k] > 0.5));
     STEMS.forEach((st, k) => add(p + 'stemlevel.' + st.key, 'Nivel del stem ' + st.name, 'abs', (v) => d.setStemLevel(k, v), g));

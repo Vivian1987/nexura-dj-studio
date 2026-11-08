@@ -81,7 +81,7 @@ export class Assistant {
     if (!d) return [];
     const L = this.app.library;
     const exclude = new Set(this.app.decks.filter(x => x.track).map(x => x.track.id));
-    for (const e of (L.session ? L.session.entries : [])) exclude.add(e.id);
+    for (const id of L.playedIds()) exclude.add(id);
     const from = d.track;
     const out = [];
     for (const t of this.candidates(exclude)) {

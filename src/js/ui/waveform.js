@@ -199,6 +199,19 @@ export class WaveDetail {
       ctx.fillStyle = '#000'; ctx.font = '700 10px Inter, sans-serif'; ctx.textAlign = 'left';
       ctx.fillText(String(i + 1), Math.round(x) + 5, h - 3);
     });
+    // Cue Loops del modo de pads Cue Loop: franja y marca superior «L1…L8»
+    (d.track.cueLoops || []).forEach((c, i) => {
+      if (!c) return;
+      const x = xOf(c.t), xe = xOf(c.le);
+      if (xe < -5 || x > w + 5) return;
+      ctx.fillStyle = c.color; ctx.globalAlpha = d.isCueLoopActive(c) ? 0.28 : 0.12;
+      ctx.fillRect(Math.round(x), 0, Math.max(2, Math.round(xe - x)), h);
+      ctx.globalAlpha = 1;
+      ctx.fillRect(Math.round(x), 0, 2, h);
+      ctx.fillRect(Math.round(x), 0, 20, 13);
+      ctx.fillStyle = '#000'; ctx.font = '700 9px Inter, sans-serif'; ctx.textAlign = 'left';
+      ctx.fillText('L' + (i + 1), Math.round(x) + 4, 10);
+    });
 
     // cabezal
     ctx.fillStyle = '#ffffff';
@@ -265,6 +278,7 @@ export class WaveOverview {
       ctx.fillRect((d.loop.s / d.duration) * w, 0, Math.max(2, ((d.loop.e - d.loop.s) / d.duration) * w), h);
     }
     d.track.cues.forEach((c) => { if (c) { ctx.fillStyle = c.color; ctx.fillRect((c.t / d.duration) * w, 0, 2, h); } });
+    (d.track.cueLoops || []).forEach((c) => { if (c) { ctx.fillStyle = c.color; ctx.fillRect((c.t / d.duration) * w, h - 5, Math.max(3, ((c.le - c.t) / d.duration) * w), 5); } });
     // secciones de la IA: triángulos de color en la parte superior
     for (const sct of d.track.sections || []) {
       const x = (sct.t / d.duration) * w;
