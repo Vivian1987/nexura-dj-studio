@@ -177,6 +177,8 @@ export function buildActions(app) {
   add('panel', 'Mostrar/ocultar sampler', 'button', (on) => { if (on) app.togglePanel('sampler'); }, 'Biblioteca');
   add('prepare', 'Añadir a Prepare', 'button', (on) => { if (on) { const t = app.libraryUI.current(); if (t) app.library.addToPrepare([t.id]); } }, 'Biblioteca');
   add('openprepare', 'Abrir Prepare', 'button', (on) => { if (on) app.libraryUI.setView('prepare'); }, 'Biblioteca');
+  add('autoplay', 'Autoplay del crate abierto (empezar/parar)', 'button', (on) => { if (on) app.autoplay.toggle(); }, 'Global', () => !!app.autoplay?.enabled);
+  add('autoplaynext', 'Autoplay: siguiente pista', 'button', (on) => { if (on) app.autoplay.skip(); }, 'Global');
   add('quantize', 'Cuantización', 'button', (on) => { if (on) app.setSetting('quantize', !app.settings.quantize); }, 'Global', () => !!app.settings.quantize);
   add('record', 'Grabar', 'button', (on) => { if (on) app.toggleRecord(); }, 'Global', () => !!eng.recording);
   for (const u of app.fxUnits) {

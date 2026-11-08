@@ -1,5 +1,7 @@
 // Capa de plataforma: usa el puente de Electron (window.nexura) y, si no existe
 // (modo navegador para pruebas), recurre a APIs web equivalentes.
+import { treeFromRelPaths } from './library/folder-crates.js';
+
 const N = window.nexura;
 export const isDesktop = !!(N && N.isDesktop);
 
@@ -26,6 +28,38 @@ function pickWeb(dir) {
     inp.accept = 'audio/*';
     if (dir) inp.webkitdirectory = true;
     inp.onchange = () => resolve([...inp.files].filter(f => /\.(mp3|wav|flac|ogg|oga|opus|m4a|aac|mp4|webm)$/i.test(f.name)).map(webInfo));
+    inp.click();
+  });
+}
+
+const AUDIO_RE = /\.(mp3|wav|flac|ogg|oga|opus|m4a|aac|mp4|webm)$/i;
+const byName = (a, b) => a.name.localeCompare(b.name, 'es', { numeric: true, sensitivity: 'base' });
+
+// Navegador: carpeta soltada (FileSystemDirectoryEntry) → { name, files, dirs }
+async function webEntryTree(dir, depth = 0) {
+  const node = { name: dir.name, files: [], dirs: [] };
+  if (depth > 12) return node;
+  const reader = dir.createReader(), entries = [];
+  for (;;) {
+    const batch = await new Promise((res) => reader.readEntries(res, () => res([])));
+    if (!batch.length) break;
+    entries.push(...batch);
+  }
+  for (const e of entries.sort(byName)) {
+    if (e.isDirectory) { if (!e.name.startsWith('.')) node.dirs.push(await webEntryTree(e, depth + 1)); }
+    else if (AUDIO_RE.test(e.name)) { const f = await new Promise((res) => e.file(res, () => res(null))); if (f) node.files.push(webInfo(f)); }
+  }
+  return node;
+}
+
+// Navegador: «+ Carpeta» con webkitdirectory → árbol por webkitRelativePath
+function pickWebTree() {
+  return new Promise((resolve) => {
+    const inp = document.createElement('input');
+    inp.type = 'file'; inp.multiple = true; inp.webkitdirectory = true;
+    inp.onchange = () => resolve(treeFromRelPaths([...inp.files].filter(f => AUDIO_RE.test(f.name))
+      .sort((a, b) => a.webkitRelativePath.localeCompare(b.webkitRelativePath, 'es', { numeric: true, sensitivity: 'base' }))
+      .map(f => ({ rel: f.webkitRelativePath || f.name, info: webInfo(f) }))));
     inp.click();
   });
 }
@@ -76,6 +110,28 @@ export const platform = {
   async artGet(id, p) { if (N && N.artGet) return N.artGet(id, p); return null; },
   async openFiles() { if (N) return N.openFiles(); return pickWeb(false); },
   async openFolder() { if (N) return N.openFolder(); return pickWeb(true); },
+  // «+ Carpeta» conservando la estructura: { files: [], dirs: [árbol] } o null
+  async openFolderTree() { if (N && N.openFolderTree) return N.openFolderTree(); return pickWebTree(); },
+  // Lo soltado como árbol { files: sueltos, dirs: [carpetas] }. Lo que depende del evento (archivos y
+  // entradas) se lee antes del primer await: el DataTransfer deja de ser válido al acabar el evento.
+  treeFromDrop(dt) {
+    const files = [...(dt.files || [])];
+    if (N) {
+      const paths = files.map(f => N.pathForFile(f)).filter(Boolean);
+      return N.listAudioTree ? N.listAudioTree(paths) : N.infoForPaths(paths).then(infos => ({ files: infos, dirs: [] }));
+    }
+    const entries = [...(dt.items || [])].filter(i => i.kind === 'file').map(i => i.webkitGetAsEntry ? i.webkitGetAsEntry() : null);
+    return (async () => {
+      const out = { files: [], dirs: [] };
+      if (!entries.some(e => e && e.isDirectory)) { out.files = files.filter(f => AUDIO_RE.test(f.name)).map(webInfo); return out; }
+      for (let i = 0; i < entries.length; i++) {
+        const e = entries[i];
+        if (e && e.isDirectory) out.dirs.push(await webEntryTree(e));
+        else if (files[i] && AUDIO_RE.test(files[i].name)) out.files.push(webInfo(files[i]));
+      }
+      return out;
+    })();
+  },
   // Devuelve [{ path, name, data: Uint8Array }] o null
   async openLibraryFile() {
     if (N) return N.openLibraryFile();

@@ -1,8 +1,9 @@
 // Interfaz de la biblioteca
-import { el, fmtTime, camelotCompatible, debounce, uid, keyColor, CUE_COLORS } from '../util.js';
+import { el, fmtTime, camelotCompatible, debounce, uid, keyColor, CUE_COLORS, toast } from '../util.js';
 import { btn, select } from './controls.js';
 import { SMART_FIELDS, SMART_OPS, CRATE_SORTS } from '../library/library.js';
 import { cratePath, pathLabel, effectiveColor } from '../library/crate-tree.js';
+import { treeFiles } from '../library/folder-crates.js';
 import { COLUMNS, COL_BY_KEY, DEFAULT_COLS, visibleColumns, columnTemplate, columnsFor } from '../library/columns.js';
 import { ENERGY_MODES } from '../ai/assistant.js';
 
@@ -14,6 +15,7 @@ const GRID = 'var(--lib-cols)';
 const SIDE_MIN = 140, SIDE_MAX = 520;
 const ART_SIZES = { small: { row: 28, col: 30 }, medium: { row: 44, col: 46 } };
 // 1 h 05 min / 42 min
+const countLabel = (n) => n === 1 ? '1 pista' : `${n} pistas`;
 const fmtTotal = (s) => { const m = Math.round(s / 60); return m >= 60 ? `${Math.floor(m / 60)} h ${String(m % 60).padStart(2, '0')} min` : `${m} min`; };
 
 export class LibraryUI {
@@ -100,7 +102,8 @@ export class LibraryUI {
     // soltar archivos del sistema (las listas .m3u/.m3u8 se importan como crate)
     main.addEventListener('dragover', (e) => { if (e.dataTransfer.types.includes('Files')) { e.preventDefault(); main.classList.add('drop'); } });
     main.addEventListener('dragleave', () => main.classList.remove('drop'));
-    main.addEventListener('drop', (e) => { main.classList.remove('drop'); if (e.dataTransfer.files.length) { e.preventDefault(); this.dropFiles(e.dataTransfer.files, this.viewId.startsWith('crate:') ? this.viewId.slice(6) : null); } });
+    // en una crate abierta, las carpetas soltadas se convierten en sus subcrates; en otra vista, solo se añaden
+    main.addEventListener('drop', (e) => { main.classList.remove('drop'); if (e.dataTransfer.files.length) { e.preventDefault(); this.dropData(e.dataTransfer, { target: this.viewId.startsWith('crate:') ? this.viewId.slice(6) : undefined }); } });
     new ResizeObserver(() => this.renderRows()).observe(this.scroller);
     new ResizeObserver(() => this.placeSideRs()).observe(this.side);
   }
@@ -141,7 +144,8 @@ export class LibraryUI {
         if (!opts.drop) return;
         const ids = e.dataTransfer.getData('text/nexura-track');
         if (ids) opts.drop(ids.split(','));
-        else if (e.dataTransfer.files.length) { const added = await this.dropFiles(e.dataTransfer.files, null, opts.crateId || null); if (added.length) opts.drop(added.map(t => t.id)); }
+        else if (e.dataTransfer.files.length && opts.crateId) await this.dropData(e.dataTransfer, { target: opts.crateId, listParent: opts.crateId });
+        else if (e.dataTransfer.files.length) { const added = await this.dropData(e.dataTransfer); if (added.length) opts.drop(added.map(t => t.id)); }
       });
     }
     return it;
@@ -158,14 +162,18 @@ export class LibraryUI {
     } else if (!L.moveCrate(id, target, z === 'after') && !L.protected) this.app.toast('No se puede meter una crate dentro de uno de sus subcrates', 'warn');
   }
 
-  // Archivos soltados: las listas .m3u/.m3u8 se importan como crate (dentro de «listParent» si se sueltan
-  // sobre una crate de la barra lateral); el resto, como pistas
-  async dropFiles(fileList, crateId = null, listParent = null) {
-    const files = [...fileList];
+  // Archivos y carpetas soltados: las listas .m3u/.m3u8 se importan como crate (dentro de «listParent» si
+  // se sueltan sobre una crate de la barra lateral); el audio, según «target» (ver app.importTree):
+  // undefined = solo a la biblioteca, null = carpetas como crates en la raíz, id = archivos sueltos a esa
+  // crate y cada carpeta como subcrate suyo con su estructura. Devuelve las pistas añadidas.
+  async dropData(dt, { target, listParent = null } = {}) {
+    const files = [...dt.files];
+    const treeP = this.app.platform.treeFromDrop(dt);   // antes de cualquier await (el evento caduca)
     const lists = files.filter(f => /\.m3u8?$/i.test(f.name));
     if (lists.length) await this.app.importPlaylists(await Promise.all(lists.map(f => this.app.platform.playlistFromFile(f))), listParent);
-    const rest = files.filter(f => !lists.includes(f));
-    return rest.length ? this.app.importDropped(rest, crateId) : [];
+    const tree = await treeP;
+    if (lists.length && !treeFiles(tree).length) return [];
+    return this.app.importTree(tree, target);
   }
 
   // --- árbol de crates (subcrates)
@@ -257,16 +265,17 @@ export class LibraryUI {
       return it;
     });
   }
-  // Cabecera «CRATES»: soltar aquí una crate la devuelve a la raíz
+  // Cabecera «CRATES»: soltar aquí una crate la devuelve a la raíz; soltar carpetas crea crates en la raíz
   cratesSection(...actions) {
     const sec = this.section('CRATES', ...actions);
-    sec.title = 'Suelta aquí una crate para devolverla a la raíz';
-    sec.addEventListener('dragover', (e) => { if (e.dataTransfer.types.includes('text/nexura-crate')) { e.preventDefault(); sec.classList.add('drop'); } });
+    sec.title = 'Suelta aquí una crate para devolverla a la raíz, o carpetas de música para crear crates con su estructura';
+    sec.addEventListener('dragover', (e) => { if (e.dataTransfer.types.includes('text/nexura-crate') || e.dataTransfer.types.includes('Files')) { e.preventDefault(); sec.classList.add('drop'); } });
     sec.addEventListener('dragleave', () => sec.classList.remove('drop'));
     sec.addEventListener('drop', (e) => {
       sec.classList.remove('drop');
       const id = e.dataTransfer.getData('text/nexura-crate');
       if (id) { e.preventDefault(); this.lib.setCrateParent(id, null); }
+      else if (e.dataTransfer.files.length) { e.preventDefault(); this.dropData(e.dataTransfer, { target: null }); }
     });
     return sec;
   }
@@ -368,6 +377,13 @@ export class LibraryUI {
       this.rows = this.app.ai.suggest(80).filter(t => !q.length || q.every(tok => `${t.title} ${t.artist} ${t.genre} ${t.camelot} ${t.bpm ? Math.round(t.bpm) : ''}`.toLowerCase().includes(tok)));
     } else this.rows = this.lib.query(this.viewId, this.search, this.viewId.startsWith('history:') && !this.sort.field ? null : this.sort);
     if (keepId) this.cursor = this.rows.findIndex(r => r.id === keepId);
+    // tras quitar pistas con Supr queda seleccionada la que ocupa ahora su lugar
+    if (this.pendingSel != null) {
+      const i = Math.min(this.pendingSel, this.rows.length - 1);
+      this.pendingSel = null; this.sel.clear();
+      if (i >= 0) this.sel.add(this.rows[i].id);
+      this.cursor = this.anchor = i;
+    }
     // información de la vista: número de pistas y duración total
     const total = this.rows.reduce((s, t) => s + (t.duration || 0), 0);
     this.countEl.textContent = `${this.rows.length} pistas${total ? ' · ' + fmtTotal(total) : ''}`;
@@ -723,15 +739,59 @@ export class LibraryUI {
     if (one && one.source === 'youtube') items.push({ label: 'Abrir en YouTube', fn: () => app.platform.openExternal('https://www.youtube.com/watch?v=' + one.ytId) });
     if (one && (one.bpm || one.camelot)) items.push({ label: '✨ Crear set desde esta pista (IA)…', fn: () => app.aiBuildSet(one) });
     items.push({ label: 'Editar…', fn: () => this.editTrack(one) });
-    // en una crate padre que muestra las pistas de sus subcrates, se quitan también de ellos
-    if (this.viewId.startsWith('crate:')) {
-      const cid = this.viewId.slice(6), deep = L.subTracks && L.subcrateIds(cid).length > 0;
-      items.push({ label: deep ? 'Quitar de la crate y sus subcrates' : 'Quitar de la crate', fn: () => L.removeFromCrate(cid, ids, deep) });
-    }
-    if (this.viewId === 'prepare') items.push({ label: 'Quitar de Prepare', fn: () => L.removeFromPrepare(ids) });
-    items.push({ label: `Eliminar de la biblioteca (${ids.length})`, danger: true, fn: async () => { if (!L.guard('remove')) return; if (await app.confirm(`¿Quitar ${ids.length} pista(s) de la biblioteca? Los archivos no se borran del disco.`)) L.remove(ids); } });
+    if (this.viewId.startsWith('crate:')) items.push({ label: this.crateDeep(this.viewId.slice(6)) ? 'Quitar de la crate y sus subcrates' : 'Quitar de la crate', key: 'Supr', fn: () => this.removeFromCrate(this.viewId.slice(6), ids) });
+    if (this.viewId === 'prepare') items.push({ label: 'Quitar de Prepare', key: 'Supr', fn: () => this.removeFromPrepare(ids) });
+    const supr = this.viewId === 'all' || this.viewId === 'everything' || this.viewId === 'yt-all';
+    items.push({ label: `Eliminar de la biblioteca (${ids.length})`, key: supr ? 'Supr' : 'Ctrl+Supr', danger: true, fn: () => this.deleteFromLibrary(ids) });
     app.contextMenu(e, items);
   }
+
+  // ------------------------------------------------------------ quitar pistas (menú y teclado)
+  // Foco en la tabla (no en el buscador ni en la barra lateral)
+  tableFocused() { return this.focus === 'table' && this.scroller.contains(document.activeElement); }
+  // Supr: lo que corresponde a la vista; hard (Ctrl+Supr): eliminar de la biblioteca desde cualquier vista
+  deleteKey(hard = false) {
+    const ids = this.selected().map(t => t.id), v = this.viewId;
+    if (!ids.length) return false;
+    if (hard || v === 'all' || v === 'everything' || v === 'yt-all') return this.deleteFromLibrary(ids);
+    if (v.startsWith('crate:')) return this.removeFromCrate(v.slice(6), ids);
+    if (v === 'prepare') return this.removeFromPrepare(ids);
+    // historial, smart crates, Siguiente pista (IA) y listas de YouTube: su contenido no se edita a mano
+    const what = v.startsWith('history:') ? 'del historial' : v.startsWith('smart:') ? 'de una smart crate (sigue sus reglas)' : v === 'ai:next' ? 'de las sugerencias de la IA' : 'de una lista de YouTube importada';
+    toast(`Supr no quita pistas ${what}. Para eliminarlas de la biblioteca: Ctrl+Supr`, 'warn', 4500);
+    return false;
+  }
+  // en una crate padre que muestra las pistas de sus subcrates, se quitan también de ellos
+  crateDeep(cid) { return this.lib.subTracks && this.lib.subcrateIds(cid).length > 0; }
+  removeFromCrate(cid, ids) {
+    const L = this.lib, c = L.crate(cid);
+    if (!c || !L.guard('crateTracks')) return false;
+    const first = this.firstSelIndex(ids);
+    const undo = L.removeFromCrate(cid, ids, this.crateDeep(cid));
+    if (!undo) return false;
+    this.pendingSel = first;
+    const name = this.crateLabel(c);
+    toast(`${countLabel(ids.length)} ${ids.length === 1 ? 'quitada' : 'quitadas'} de «${name}»`, 'ok', 6000,
+      undo.length ? { label: 'Deshacer', fn: () => { if (L.restoreCrates(undo)) toast(`Pistas devueltas a «${name}»`, 'ok'); } } : null);
+    return true;
+  }
+  removeFromPrepare(ids) {
+    const L = this.lib, first = this.firstSelIndex(ids);
+    const old = L.removeFromPrepare(ids);
+    this.pendingSel = first;
+    toast(`${countLabel(ids.length)} ${ids.length === 1 ? 'quitada' : 'quitadas'} de Prepare`, 'ok', 6000, { label: 'Deshacer', fn: () => { L.restorePrepare(old); toast('Pistas devueltas a Prepare', 'ok'); } });
+    return true;
+  }
+  async deleteFromLibrary(ids) {
+    const L = this.lib;
+    if (!ids.length || !L.guard('remove')) return false;
+    const first = this.firstSelIndex(ids);
+    const ok = await this.app.confirm(`¿Quitar ${countLabel(ids.length)} de la biblioteca? Los archivos no se borran del disco.`);
+    if (ok && L.remove(ids)) { this.pendingSel = first; toast(`${countLabel(ids.length)} ${ids.length === 1 ? 'eliminada' : 'eliminadas'} de la biblioteca`, 'ok'); }
+    this.scroller.focus({ preventScroll: true });   // para seguir con el teclado tras el diálogo
+    return ok;
+  }
+  firstSelIndex(ids) { const s = new Set(ids); const i = this.rows.findIndex(t => s.has(t.id)); return i < 0 ? null : i; }
 
   showCratesOf(t) {
     if (!t) return;

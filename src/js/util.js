@@ -96,13 +96,16 @@ export function parseBpm(v) {
   return isFinite(n) && n > 20 && n < 400 ? n : null;
 }
 
-export function toast(msg, type = 'info', ms = 3500) {
+// action (opcional): { label, fn } → botón dentro del aviso (p. ej. «Deshacer»); se usa una sola vez
+export function toast(msg, type = 'info', ms = 3500, action = null) {
   const host = document.getElementById('toasts');
   if (!host) return console.log(msg);
   const t = el('div', { class: 'toast ' + type }, msg);
+  const hide = () => { t.classList.remove('show'); setTimeout(() => t.remove(), 300); };
+  if (action) t.append(el('button', { class: 'toast-act', onclick: () => { hide(); action.fn(); } }, action.label));
   host.appendChild(t);
   requestAnimationFrame(() => t.classList.add('show'));
-  setTimeout(() => { t.classList.remove('show'); setTimeout(() => t.remove(), 300); }, ms);
+  setTimeout(hide, ms);
 }
 
 // Color de una tonalidad según su posición en la rueda Camelot (A = menor más oscuro, B = mayor más claro)

@@ -3,6 +3,7 @@ import { Emitter, hashId, uid, debounce } from '../util.js';
 import { platform } from '../platform.js';
 import { energyFrom, ENERGY_VERSION } from '../analysis/analysis-core.js';
 import { normalizeParents, canMoveInto, crateTrackIds, deletePlan, descendantIds, flattenTree, parentId, ensurePath } from './crate-tree.js';
+import { applyFolderTree, pruneTree, treeFiles } from './folder-crates.js';
 
 export const SMART_FIELDS = {
   title: 'Título', artist: 'Artista', album: 'Álbum', genre: 'Género', bpm: 'BPM', camelot: 'Tonalidad (Camelot)',
@@ -198,8 +199,34 @@ export class Library extends Emitter {
   // Subcrates: crate.parent = id de la crate padre (null o ausente = raíz); ver crate-tree.js
   createCrate(name, parent = null) {
     if (!this.guard('crate')) return null;
+    const c = this._newCrate(name, parent);
+    this.saveSoon(); this.emit('change'); return c;
+  }
+  _newCrate(name, parent = null) {
     const c = { id: uid(), name, ids: [], created: Date.now(), parent: parent && this.crates.some(x => x.id === parent) ? parent : null };
-    this.crates.push(c); this.saveSoon(); this.emit('change'); return c;
+    this.crates.push(c);
+    return c;
+  }
+  // Carpetas soltadas o elegidas (árbol de folder-crates.js) sobre «target» (id de crate o null = raíz):
+  // añade todas las pistas a la biblioteca y crea/reutiliza un subcrate por carpeta con sus pistas.
+  // Con la biblioteca protegida solo se añaden a la biblioteca (y se avisa).
+  // Devuelve { tracks, created: [crates], top: [crates de primer nivel], blocked }
+  addFolderTree(tree, target = null) {
+    const tracks = this.addFiles(treeFiles(tree));
+    const pruned = pruneTree(tree);
+    if (target && !this.crate(target)) target = null;
+    const needs = pruned.dirs.length ? 'crate' : target && pruned.files.length ? 'crateTracks' : null;
+    if (!needs) return { tracks, created: [], top: [], blocked: false };
+    if (this.protected) { this.guard(needs); return { tracks, created: [], top: [], blocked: true }; }
+    const plan = applyFolderTree(this.crates, pruned, target, { make: (n, p) => this._newCrate(n, p), idOf: (p) => { const t = this.byPath(p); return t ? t.id : null; } });
+    for (const [cid, ids] of plan.assign) {
+      const c = this.crate(cid);
+      if (!c) continue;
+      const have = new Set(c.ids);
+      for (const i of ids) if (!have.has(i)) { have.add(i); c.ids.push(i); }
+    }
+    this.saveSoon(); this.emit('change');
+    return { tracks, created: plan.created, top: plan.top, blocked: false };
   }
   crate(id) { return this.crates.find(c => c.id === id) || null; }
   renameCrate(id, name) { if (!this.guard('crate')) return; const c = this.crates.find(c => c.id === id); if (c) { c.name = name; this.saveSoon(); this.emit('change'); } }
@@ -267,13 +294,33 @@ export class Library extends Emitter {
   }
   // Crate creada a partir de una lista de Spotify (crate.spotify.key = 'playlist:<id>')
   crateBySpotify(key) { return this.crates.find(c => c.spotify && c.spotify.key === key) || null; }
-  // deep: quita también de los subcrates (en la vista de una crate padre que muestra sus pistas)
+  // deep: quita también de los subcrates (en la vista de una crate padre que muestra sus pistas).
+  // Devuelve lo necesario para deshacer ([{id, ids}] con el contenido anterior de cada crate tocada) o null
   removeFromCrate(id, ids, deep = false) {
-    if (!this.guard('crateTracks')) return;
+    if (!this.guard('crateTracks')) return null;
     const c = this.crates.find(c => c.id === id);
-    if (!c) return;
-    for (const x of [c, ...(deep ? descendantIds(this.crates, id).map(d => this.crate(d)) : [])]) x.ids = x.ids.filter(i => !ids.includes(i));
+    if (!c) return null;
+    const drop = new Set(ids), undo = [];
+    for (const x of [c, ...(deep ? descendantIds(this.crates, id).map(d => this.crate(d)) : [])]) {
+      if (!x || !x.ids.some(i => drop.has(i))) continue;
+      undo.push({ id: x.id, ids: x.ids.slice() });
+      x.ids = x.ids.filter(i => !drop.has(i));
+    }
     this.saveSoon(); this.emit('change');
+    return undo;
+  }
+  // Deshacer removeFromCrate: vuelve al orden anterior (sin pistas ya borradas de la biblioteca) y
+  // conserva al final las añadidas mientras tanto
+  restoreCrates(undo) {
+    if (!undo || !undo.length || !this.guard('crateTracks')) return false;
+    for (const u of undo) {
+      const c = this.crate(u.id);
+      if (!c) continue;
+      const old = u.ids.filter(i => this.tracks.has(i)), had = new Set(old);
+      c.ids = [...old, ...c.ids.filter(i => !had.has(i))];
+    }
+    this.saveSoon(); this.emit('change');
+    return true;
   }
   deleteYtPlaylist(id) { if (!this.guard('crate')) return false; this.ytPlaylists = this.ytPlaylists.filter(p => p.id !== id); this.saveSoon(); this.emit('change'); return true; }
 
@@ -310,7 +357,13 @@ export class Library extends Emitter {
 
   // --- Prepare
   addToPrepare(ids) { for (const i of ids) if (!this.prepare.includes(i)) this.prepare.push(i); this.saveSoon(); this.emit('change'); }
-  removeFromPrepare(ids) { this.prepare = this.prepare.filter(i => !ids.includes(i)); this.saveSoon(); this.emit('change'); }
+  // Devuelve la lista anterior (para deshacer con restorePrepare)
+  removeFromPrepare(ids) { const old = this.prepare.slice(); this.prepare = this.prepare.filter(i => !ids.includes(i)); this.saveSoon(); this.emit('change'); return old; }
+  restorePrepare(old) {
+    const had = new Set(old);
+    this.prepare = [...old.filter(i => this.tracks.has(i)), ...this.prepare.filter(i => !had.has(i))];
+    this.saveSoon(); this.emit('change');
+  }
 
   // --- Historial
   logPlay(track, deck) {

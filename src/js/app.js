@@ -19,10 +19,14 @@ import { SamplerUI } from './ui/sampler-ui.js';
 import { LibraryUI } from './ui/library-ui.js';
 import { Assistant } from './ai/assistant.js';
 import { Automix } from './ai/automix.js';
+import { Autoplay } from './ai/autoplay.js';
+import { AUTOPLAY_DEFAULTS, autoplayOptions } from './ai/autoplay-core.js';
+import { AutoplayUI } from './ui/autoplay-ui.js';
 import { StemsManager } from './audio/stems.js';
 import { parseLibrary, mergeInto, parseM3u, parseVirtualFolder, decodePlaylist } from './library/import.js';
 import { planRelocation, fileName } from './library/relocate.js';
 import { splitListPath } from './library/crate-tree.js';
+import { treeFiles } from './library/folder-crates.js';
 import { readFileMarkers, parseCrate, id3Size } from './library/filemarkers.js';
 import { normalize, dominantBpm } from './audio/grid.js';
 import { planFxRouting } from './audio/fx-routing.js';
@@ -34,11 +38,11 @@ import { Feedback } from './ui/feedback.js';
 
 const DEFAULTS = {
   outputMode: 'auto', masterDevice: '', cueDevice: '', latency: 'normal',
-  pitchRange: 0.08, keylockDefault: false, quantize: true, cueLoops: true, aiAutoCues: true, aiEnergyMode: 'keep', automixBars: 16, ollamaUrl: 'http://127.0.0.1:11434', ollamaModel: '', syncPhase: true, autoGain: true,
+  pitchRange: 0.08, keylockDefault: false, quantize: true, cueLoops: true, aiAutoCues: true, aiEnergyMode: 'keep', automixBars: 16, autoplay: { ...AUTOPLAY_DEFAULTS }, ollamaUrl: 'http://127.0.0.1:11434', ollamaModel: '', syncPhase: true, autoGain: true,
   minBpm: 85, maxBpm: 175, motorStart: 4, motorStop: 4, jogSensitivity: 1,
   invertPitch: false, mc4000PhonesMidi: false, midiProfiles: {}, xfCurve: 'smooth', waveZoom: 6,
   historyAfter: 30, loadOnPlaying: 'play', slipRelease: 0, stemSlipMode: 'mute', stemSlipBeats: 1,
-  protectLibrary: false, libCols: null, libColsSame: true, libColsByView: {}, libArtSize: 'small', crateSort: 'custom', crateSubTracks: true, crateCollapsed: [], deckLayout: 'auto', stemsDir: '', stemsModel: 'htdemucs', stemsAuto: true, stemsBackground: true, autoAnalyze: true,
+  protectLibrary: false, libCols: null, libColsSame: true, libColsByView: {}, libArtSize: 'small', crateSort: 'custom', crateSubTracks: true, folderToCrates: true, crateCollapsed: [], deckLayout: 'auto', stemsDir: '', stemsModel: 'htdemucs', stemsAuto: true, stemsBackground: true, autoAnalyze: true,
   expansions: { flip: false, fxPresets: false, laptop: false, video: false, dvs: false, pitchTime: false },
   ytApiKey: '', ytClientId: '', ytClientSecret: '', spotifyClientId: '',
   panels: { sampler: false }, midiMap: {}, libView: 'all', libSort: { field: null, dir: 1 }
@@ -64,6 +68,7 @@ class App extends Emitter {
     const saved = await platform.storeGet('settings');
     if (saved) this.settings = { ...DEFAULTS, ...saved, panels: { ...DEFAULTS.panels, ...(saved.panels || {}) } };
     this.settings.expansions = { ...DEFAULTS.expansions, ...(this.settings.expansions || {}) };
+    this.settings.autoplay = autoplayOptions(this.settings.autoplay);
     this.info = await platform.info();
     this.feedback = new Feedback(this);
     document.title = 'Nexura DJ Studio' + (this.info.isBeta ? ` ${this.info.version}` : '');
@@ -90,6 +95,7 @@ class App extends Emitter {
     this.layers = [0, 1]; // deck visible en el lado izquierdo (1 o 3) y derecho (2 o 4)
     this.expansions = new ExpansionManager(this);
     this.automix = new Automix(this);
+    this.autoplay = new Autoplay(this);
     this.stems = new StemsManager(this);
     this.restoreMixer();
     this.rewireFx();
@@ -121,6 +127,7 @@ class App extends Emitter {
     requestAnimationFrame(() => this.frame());
     setInterval(() => this.decks.forEach(d => d.syncTick()), 250);
     setInterval(() => this.automix.tick().catch(e => console.error('automix', e)), 100);
+    setInterval(() => { try { this.autoplay.tick(); } catch (e) { console.error('autoplay', e); } }, 100);
     this.updateStatus();
     window.addEventListener('beforeunload', () => { this.library.save(); platform.storeSet('settings', this.settings); });
   }
@@ -209,7 +216,8 @@ class App extends Emitter {
     this.laptopToggle = btn('LAPTOP', { cls: 'small', title: 'Alternar modo solo laptop (F8)', onClick: () => this.toggleLaptopMode() });
     this.automixBtn = btn('✨ AUTOMIX', { cls: 'small automix-btn', title: 'La IA pincha sola: elige la siguiente pista (Prepare o sugerencia), sincroniza y mezcla en el outro (F7)', onClick: () => this.automix.toggle() });
     this.automix.on('change', () => this.automixBtn.classList.toggle('on', this.automix.enabled));
-    $('#top-right').append(this.feedbackBtn, this.automixBtn, this.laptopToggle, this.samplerToggle, this.recBtn, this.recTime, this.outStatus, this.midiStatus,
+    this.autoplayUI = new AutoplayUI(this);
+    $('#top-right').append(this.feedbackBtn, this.autoplayUI.ind, this.autoplayUI.topBtn, this.automixBtn, this.laptopToggle, this.samplerToggle, this.recBtn, this.recTime, this.outStatus, this.midiStatus,
       btn('⚙', { cls: 'small icon', title: 'Ajustes', onClick: () => this.settingsUI.open() }), this.clock);
     $('#wave-zoom').append(
       btn('−', { cls: 'micro', title: 'Alejar', onClick: () => this.waves.forEach(w => { w.zoom = Math.min(40, w.zoom * 1.25); }) }),
@@ -293,6 +301,7 @@ class App extends Emitter {
       this.clock.textContent = now.toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' });
       const amLabel = this.automix.enabled && this.automix.status().startsWith('AUTOMIX ·') ? '✨ ' + this.automix.status().replace('AUTOMIX · ', '') : '✨ AUTOMIX';
       if (this.automixBtn.textContent !== amLabel) this.automixBtn.textContent = amLabel;
+      this.autoplayUI.frame();
       if (this.engine.recording) this.recTime.textContent = fmtTime((performance.now() - this.engine.recStart) / 1000, false);
     } catch (e) { console.error(e); }
   }
@@ -575,9 +584,15 @@ class App extends Emitter {
   }
 
   async addFiles(folder) {
+    const crate = this.libraryUI.viewId.startsWith('crate:') ? this.libraryUI.viewId.slice(6) : null;
+    // «+ Carpeta» con «Crear crates con la estructura de carpetas»: crate con el nombre de la carpeta (dentro
+    // de la crate abierta, si la hay) y un subcrate por subcarpeta
+    if (folder && this.settings.folderToCrates !== false) {
+      const tree = await platform.openFolderTree();
+      return tree ? this.importTree(tree, crate) : [];
+    }
     const infos = folder ? await platform.openFolder() : await platform.openFiles();
     if (!infos || !infos.length) return [];
-    const crate = this.libraryUI.viewId.startsWith('crate:') ? this.libraryUI.viewId.slice(6) : null;
     const added = this.library.addFiles(infos, crate);
     toast(`${added.length} pistas añadidas`, 'ok');
     if (this.settings.autoAnalyze) this.analyzeMany(added);
@@ -590,6 +605,23 @@ class App extends Emitter {
     toast(`${added.length} pistas añadidas`, 'ok');
     if (this.settings.autoAnalyze) this.analyzeMany(added);
     return added;
+  }
+  // Árbol de carpetas ({ files, dirs }, ver library/folder-crates.js) sobre «target»: undefined = solo a la
+  // biblioteca; null = carpetas como crates en la raíz (los sueltos, solo a la biblioteca); id = archivos
+  // sueltos a esa crate y carpetas como subcrates suyos. Devuelve las pistas añadidas.
+  async importTree(tree, target) {
+    const L = this.library;
+    const n = treeFiles(tree).length;
+    if (!n) { toast('No se encontraron archivos de audio compatibles', 'warn'); return []; }
+    let res;
+    if (target === undefined) res = { tracks: L.addFiles(treeFiles(tree)), created: [], top: [] };
+    else res = L.addFolderTree(tree, target);
+    const { tracks, created, top } = res;
+    if (target && L.crate(target)) this.libraryUI.expandCrate(target);
+    const where = top.length === 1 ? ` en «${this.libraryUI.crateLabel(top[0])}»` : '';
+    toast(`${tracks.length} pistas añadidas${where}` + (created.length ? ` · ${created.length} crate(s) nuevas` : '') + (res.blocked ? ' (solo a la biblioteca: está protegida)' : ''), 'ok');
+    if (this.settings.autoAnalyze) this.analyzeMany(tracks);
+    return tracks;
   }
 
   // Listas .m3u / .m3u8 (botón de la barra lateral o arrastrar el archivo): una crate con el nombre del
@@ -953,7 +985,8 @@ class App extends Emitter {
     this.closeMenus();
     const build = (list) => el('div', { class: 'ctx' }, ...list.map(it => {
       const row = el('div', { class: 'ctx-item' + (it.danger ? ' danger' : '') + (it.sub ? ' has-sub' : '') },
-        it.color ? el('span', { class: 'swatch', style: { background: it.color } }) : null, it.label || '');
+        it.color ? el('span', { class: 'swatch', style: { background: it.color } }) : null, it.label || '',
+        it.key ? el('span', { class: 'ctx-key' }, it.key) : null);
       if (it.sub) row.appendChild(build(it.sub));
       else row.addEventListener('pointerdown', (ev) => { ev.stopPropagation(); this.closeMenus(); it.fn && it.fn(); });
       row.addEventListener('pointerdown', (ev) => ev.stopPropagation());
@@ -978,6 +1011,19 @@ class App extends Emitter {
       const tag = (e.target.tagName || '').toLowerCase();
       if (tag === 'input' || tag === 'textarea' || tag === 'select' || this._modal) return;
       if ((e.ctrlKey || e.metaKey) && e.code === 'KeyF') { e.preventDefault(); this.libraryUI.searchIn.focus(); return; }
+      // Supr = quitar de la vista (crate, Prepare) o de la biblioteca; Ctrl+Supr = eliminar de la biblioteca.
+      // Solo con el foco en la tabla (los campos de texto ya han salido arriba)
+      if (e.key === 'Delete' && !e.altKey && !e.shiftKey && this.libraryUI.tableFocused()) {
+        e.preventDefault();
+        if (!e.repeat) { this.closeMenus(); this.libraryUI.deleteKey(e.ctrlKey || e.metaKey); }
+        return;
+      }
+      // Ctrl+→ = Autoplay: siguiente pista
+      if ((e.ctrlKey || e.metaKey) && e.code === 'ArrowRight' && !e.altKey && !e.shiftKey) {
+        e.preventDefault();
+        if (!e.repeat) this.autoplay.skip();
+        return;
+      }
       if (e.ctrlKey || e.metaKey || e.altKey) return;
       if (held.has(e.code)) { e.preventDefault(); return; }
       held.add(e.code);
@@ -1008,7 +1054,7 @@ class App extends Emitter {
         case 'F9': this.toggleRecord(); break;
         case 'F6': this.engine.setSplit(!this.engine.split); break;
         case 'F8': this.toggleLaptopMode(); break;
-        case 'F7': this.automix.toggle(); break;
+        case 'F7': if (e.shiftKey) this.autoplay.toggle(); else this.automix.toggle(); break;
         default: held.delete(e.code); return;
       }
       e.preventDefault();

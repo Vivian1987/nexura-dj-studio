@@ -1,6 +1,6 @@
 /* ==========================================================================
    Nexura DJ Studio — hoja de estilos
-   Paleta gris tipo Serato con acento azul. Sin !important.
+   Paleta gris tipo Serato con acento azul y selección ámbar. Sin !important.
    Índice:
      1. Variables y base        6. Mezclador           11. Diálogos y menús
      2. Disposición general     7. Efectos             12. Ajustes
@@ -28,7 +28,11 @@
   --dim: #5a7096;
   --accent: #1e9bff;
   --accent-soft: rgba(30, 155, 255, .22);
-  --sel: #0f4f8f;
+  /* Selección (filas de la biblioteca y crate activo): ámbar, para no confundirse con el azul del Deck 1 */
+  --sel: rgba(255, 163, 26, .20);
+  --sel-line: rgba(255, 163, 26, .35);
+  --sel-bar: #ffa31a;
+  --sel-text: #fff4e0;
   --ok: #2ee06a;
   --warn: #ffa31a;
   --err: #ff3b47;
@@ -307,7 +311,8 @@ body:not([data-wave-layout="deck"]) .deck-clock { width: auto; height: auto; fle
 .side-actions .btn { flex: 1; }
 .side-item { display: flex; align-items: center; gap: 8px; padding: 5px 12px; cursor: pointer; color: #c8d8f5; border-left: 2px solid transparent; }
 .side-item:hover { background: rgba(255, 255, 255, .05); }
-.side-item.on { background: var(--sel); border-left-color: var(--accent); color: #fff; }
+.side-item.on { background: var(--sel); border-left-color: var(--sel-bar); color: var(--sel-text); }
+.side-item.on .si-count, .side-item.on .si-tw { color: var(--sel-text); }
 .side-item.drop { background: var(--accent-soft); }
 .side-item.yt .si-ico { color: #d9534a; }
 .si-ico { width: 14px; text-align: center; color: var(--muted); }
@@ -341,8 +346,14 @@ body:not([data-wave-layout="deck"]) .deck-clock { width: auto; height: auto; fle
 .row-t > span { padding: 0 6px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: 12px; }
 .row-t.odd { background: rgba(120, 170, 255, .035); }
 .row-t:hover:not(.sel) { background: rgba(255, 255, 255, .05); }
-.row-t.sel { background: var(--sel); }
+/* border/radius a 0: la clase .sel de los selectores (sección 3) también casa con .row-t.sel y añadía un borde que estrechaba las columnas */
+.row-t.sel { background: var(--sel); border: 0; border-radius: 0; box-shadow: inset 3px 0 0 var(--sel-bar), inset 0 0 0 1px var(--sel-line); }
 .row-t.cur { box-shadow: inset 2px 0 0 var(--accent); }
+/* el cursor del teclado dentro de la selección: barra ámbar y borde ámbar entero */
+.row-t.sel.cur { box-shadow: inset 3px 0 0 var(--sel-bar), inset 0 0 0 1px var(--sel-bar); }
+/* texto de la selección; BPM, tonalidad, estado (deck) y estrellas conservan su color */
+.row-t.sel > span:not(.c-bpm):not(.key):not(.st):not(.rating), .row-t.sel.played .c-title { color: var(--sel-text); }
+.row-t.sel .rating:not(:hover) i:not(.on) { color: rgba(255, 244, 224, .4); }
 .row-t.played .c-title { color: var(--muted); }
 .row-t .num { font-family: var(--mono); font-size: 11.5px; }
 .row-t .dim { color: var(--dim); }
@@ -375,6 +386,9 @@ body:not([data-wave-layout="deck"]) .deck-clock { width: auto; height: auto; fle
 .st.ai-score { color: #fff; border-radius: 3px; background: color-mix(in srgb, var(--ok) calc(var(--s) * var(--s) * 100%), #8a4b08); }
 .btn.automix-btn.on { background: color-mix(in srgb, #ffd21a 30%, var(--panel3)); border-color: #ffd21a; color: #fff; box-shadow: 0 0 8px rgba(255, 210, 26, .4); }
 .btn.ai-btn { border-color: color-mix(in srgb, #ffd21a 55%, var(--btn-line)); }
+/* Autoplay sobre un crate (autoplay-ui.js): botón, indicador de la barra superior y panel (sección 11) */
+.btn.autoplay-btn.on, .btn.autoplay-lib.on { background: color-mix(in srgb, var(--ok) 28%, var(--panel3)); border-color: var(--ok); color: #fff; box-shadow: 0 0 8px rgba(46, 224, 106, .35); }
+.autoplay-ind { max-width: 420px; padding: 4px 9px; border-radius: 20px; background: color-mix(in srgb, var(--ok) 14%, var(--panel2)); border: 1px solid rgba(46, 224, 106, .45); color: var(--text); font-size: 11px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; cursor: pointer; min-width: 0; }
 .ai-prompt { width: 100%; min-height: 70px; resize: vertical; background: var(--panel2); color: #fff; border: 1px solid var(--btn-line); border-radius: var(--radius); padding: 8px; font: inherit; }
 .ai-chips { display: flex; flex-wrap: wrap; gap: 4px; }
 .c-title .nrg { margin-left: 6px; font-size: 9.5px; font-weight: 800; color: #ffd21a; opacity: .85; }
@@ -407,7 +421,26 @@ body:not([data-wave-layout="deck"]) .deck-clock { width: auto; height: auto; fle
 .ctx-item:hover > .ctx { display: block; }
 .ctx-item.has-sub::after { content: "›"; margin-left: auto; color: var(--muted); }
 .ctx-item.danger { color: var(--err); }
+.ctx-key { margin-left: auto; padding-left: 24px; color: var(--muted); font-size: .9em; }
 .swatch { width: 14px; height: 14px; border-radius: 4px; display: inline-block; }
+/* Panel del Autoplay */
+.ap-panel { position: fixed; z-index: 150; width: min(330px, calc(100vw - 16px)); display: flex; flex-direction: column; gap: 8px; padding: 10px 12px; background: var(--panel); border: 1px solid var(--line2); border-radius: 8px; box-shadow: 0 16px 50px rgba(0, 0, 0, .6); font-size: 12px; }
+.ap-head { display: flex; justify-content: space-between; align-items: center; }
+.ap-head b { font-size: 13px; color: var(--ok); }
+.ap-src { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0 2px; color: var(--muted); }
+.ap-src b { color: var(--text); overflow-wrap: anywhere; }
+.ap-src small { flex-basis: 100%; color: var(--dim); margin-top: 2px; }
+.ap-row { display: flex; align-items: center; gap: 8px; }
+.ap-lbl { width: 70px; flex: none; color: var(--muted); }
+.ap-seg { display: flex; gap: 4px; }
+.ap-trans { flex: 1; min-width: 0; }
+.ap-fade { display: flex; align-items: center; gap: 4px; color: var(--muted); }
+.ap-fade .ap-secs { width: 56px; }
+.ap-check { cursor: pointer; }
+.ap-status { padding: 6px 8px; border-radius: var(--radius); background: var(--wave-bg); border: 1px solid var(--line); color: var(--text); font-size: 11px; min-height: 1.4em; overflow-wrap: anywhere; }
+.ap-actions { display: flex; gap: 6px; }
+.ap-actions .btn { flex: 1; }
+.ap-hint { color: var(--dim); font-size: 10.5px; }
 /* Importar lista de Spotify (spotify-ui.js) */
 .sp-import { display: flex; flex-direction: column; gap: 8px; width: min(920px, 88vw); }
 .sp-in { display: flex; gap: 6px; }
@@ -499,6 +532,8 @@ kbd { font: 11px var(--mono); background: var(--panel3); border: 1px solid var(-
 .toast.ok { border-left-color: var(--ok); }
 .toast.warn { border-left-color: var(--warn); }
 .toast.error { border-left-color: var(--err); }
+.toast-act { pointer-events: auto; margin-left: 12px; padding: 2px 10px; background: transparent; color: var(--accent); border: 1px solid var(--accent); border-radius: var(--radius); font: inherit; font-weight: 600; cursor: pointer; }
+.toast-act:hover { background: var(--accent-soft); }
 .start-overlay { position: fixed; inset: 0; background: rgba(20, 20, 20, .94); display: grid; place-items: center; z-index: 500; }
 .start-card { display: flex; flex-direction: column; gap: 18px; align-items: center; }
 .fatal { position: fixed; inset: 40px; background: #2a0f16; border: 1px solid var(--err); border-radius: 8px; padding: 20px; z-index: 999; overflow: auto; }
@@ -569,6 +604,7 @@ body.laptop-mode #app.side-expanded .lib-side { display: block; }
   #topbar { height: auto; min-height: 36px; flex-wrap: wrap; }
   #top-right { flex-wrap: wrap; justify-content: flex-end; row-gap: 4px; }
   .status-pill { max-width: 150px; overflow: hidden; text-overflow: ellipsis; }
+  .autoplay-ind { max-width: 240px; }
 }
 /* Ancho ≤ 760: una sola columna */
 @media (max-width: 760px) {
@@ -681,7 +717,6 @@ body.laptop-mode #app.side-expanded .lib-side { display: block; }
 .row-t .c-artist { color: #7fc4ff; }
 .row-t .c-bpm { color: #ffd166; }
 .row-t.played .c-title { color: #7d93bb; }
-.row-t.sel { background: linear-gradient(90deg, #0f4f8f, #0b3a6b); }
 .lib-head .th { color: #7fa6e0; }
 .status-pill.ok { color: var(--ok); border-color: rgba(46, 224, 106, .45); }
 .wave-layout-toggle button.on { box-shadow: 0 0 8px rgba(30, 155, 255, .5); }

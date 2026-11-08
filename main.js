@@ -272,6 +272,33 @@ async function scanFolder(dir, out = [], depth = 0) {
   return out;
 }
 
+// Árbol de una carpeta para crear crates con su estructura: { name, path, files: [info], dirs: [nodo] }
+const byName = (a, b) => a.name.localeCompare(b.name, 'es', { numeric: true, sensitivity: 'base' });
+async function audioTree(dir, depth = 0) {
+  const node = { name: path.basename(dir) || dir.replace(/[\\/]+$/, ''), path: dir, files: [], dirs: [] };
+  if (depth > 12) return node;
+  let entries = [];
+  try { entries = await fsp.readdir(dir, { withFileTypes: true }); } catch (_) { return node; }
+  for (const e of entries.sort(byName)) {
+    const full = path.join(dir, e.name);
+    if (e.isDirectory()) { if (!e.name.startsWith('.')) node.dirs.push(await audioTree(full, depth + 1)); }
+    else if (AUDIO_EXT.has(path.extname(e.name).toLowerCase())) { try { node.files.push(await fileInfo(full)); } catch (_) { /* skip */ } }
+  }
+  return node;
+}
+// Rutas soltadas o elegidas → { files: archivos sueltos, dirs: árboles de las carpetas }
+async function audioTreeFor(paths) {
+  const out = { files: [], dirs: [] };
+  for (const p of paths || []) {
+    try {
+      const st = await fsp.stat(p);
+      if (st.isDirectory()) out.dirs.push(await audioTree(p));
+      else if (AUDIO_EXT.has(path.extname(p).toLowerCase())) out.files.push(await fileInfo(p));
+    } catch (_) { /* skip */ }
+  }
+  return out;
+}
+
 // ---------------------------------------------------------------------------
 // YouTube: OAuth (opcional, para "Mis listas") y API Data v3
 // ---------------------------------------------------------------------------
@@ -636,6 +663,13 @@ function registerIpc() {
     for (const f of files) { try { out.push(await fileInfo(f)); } catch (_) { /* skip */ } }
     return out;
   });
+  // «+ Carpeta» con crates por carpeta: árbol de la carpeta elegida (o null)
+  ipcMain.handle('dialog:openFolderTree', async () => {
+    const r = await dialog.showOpenDialog(mainWindow, { title: 'Añadir carpeta', properties: ['openDirectory'] });
+    if (r.canceled || !r.filePaths[0]) return null;
+    return audioTreeFor([r.filePaths[0]]);
+  });
+  ipcMain.handle('fs:listAudioTree', async (_e, paths) => audioTreeFor((paths || []).map(String)));
 
   ipcMain.handle('dialog:openSample', async () => {
     const r = await dialog.showOpenDialog(mainWindow, {

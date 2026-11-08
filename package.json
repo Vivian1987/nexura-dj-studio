@@ -1,7 +1,7 @@
 {
   "name": "nexura-dj-studio",
   "productName": "Nexura DJ Studio",
-  "version": "0.9.0-beta.5",
+  "version": "0.9.0-beta.6",
   "description": "Nexura DJ Studio — software DJ de NexuraIA compatible con controladoras MIDI y listas de YouTube",
   "main": "main.js",
   "author": "NexuraIA <contacto@nexuraia.com>",

@@ -7,6 +7,8 @@ contextBridge.exposeInMainWorld('nexura', {
   info: () => ipcRenderer.invoke('app:info'),
   openFiles: () => ipcRenderer.invoke('dialog:openFiles'),
   openFolder: () => ipcRenderer.invoke('dialog:openFolder'),
+  openFolderTree: () => ipcRenderer.invoke('dialog:openFolderTree'),
+  listAudioTree: (paths) => ipcRenderer.invoke('fs:listAudioTree', paths),
   openSample: () => ipcRenderer.invoke('dialog:openSample'),
   openLibraryFile: () => ipcRenderer.invoke('dialog:openLibraryFile'),
   readHead: (p, n) => ipcRenderer.invoke('fs:readHead', p, n),

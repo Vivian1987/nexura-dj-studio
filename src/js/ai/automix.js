@@ -1,4 +1,4 @@
-// Automix IA: la app pincha sola. Elige la siguiente pista (Prepare primero, si no la sugerencia
+// Automix IA (se excluye con el Autoplay sobre un crate, ai/autoplay.js): la app pincha sola. Elige la siguiente pista (Prepare primero, si no la sugerencia
 // de la IA), la carga en el otro deck, la sincroniza y hace la transición en el outro con
 // fundido de faders e intercambio de graves (la técnica clásica de «bass swap»).
 import { Emitter, clamp } from '../util.js';
@@ -18,6 +18,8 @@ export class Automix extends Emitter {
   toggle(v = !this.on_) {
     this.on_ = !!v;
     if (this.on_) {
+      // Automix y Autoplay se excluyen
+      if (this.app.autoplay && this.app.autoplay.enabled) { this.app.autoplay.stop(true); this.app.toast('Autoplay desactivado: ahora pincha el Automix', 'info'); }
       const L = this.app.layers || [0, 1];
       this.pair = [this.app.decks[L[0]], this.app.decks[L[1]]];
       // Key lock en ambos decks: al sincronizar tempos no cambian las tonalidades que eligió la IA
