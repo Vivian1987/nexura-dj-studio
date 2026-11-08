@@ -120,6 +120,11 @@ export function buildActions(app) {
     STEMS.forEach((st, k) => add(p + 'stem.' + st.key, 'Stem ' + st.name + ' (activar/silenciar)', 'button', press(() => d.toggleStem(k)), g, () => d.stemsOn && d.stemGains[k] > 0.5));
     STEMS.forEach((st, k) => add(p + 'stemlevel.' + st.key, 'Nivel del stem ' + st.name, 'abs', (v) => d.setStemLevel(k, v), g));
     for (const [k, pr] of Object.entries(STEM_PRESETS)) add(p + 'stempreset.' + k, 'Stems: ' + pr.name, 'button', press(() => d.stemPreset(k)), g);
+    // Stems FX (1 = voz, 2 = batería, 3 = bajo, 4 = melodía) y Stem Slip (mantener)
+    STEMS.forEach((st, k) => {
+      add(p + 'stemfx' + (k + 1), `Stems FX: ${st.name}`, 'button', press(() => d.toggleStemFx(k)), g, () => d.stemsOn && !!d.stemFx[k]);
+      add(p + 'stemslip' + (k + 1), `Stem Slip: ${st.name} (mantener)`, 'button', (on) => (on ? d.stemSlipDown(k) : d.stemSlipUp(k)), g, () => !!d.stemSlipHeld[k]);
+    });
     add(p + 'modehold', 'PAD MODE (mantener + pad)', 'button', (on) => app.midi.setPadModeHold(d.idx, on), g);
     add(p + 'loop', 'Auto loop', 'button', press(() => d.autoLoop()), g, () => !!d.loop?.on);
     add(p + 'loophalve', 'Loop ½', 'button', press(() => d.loopHalve()), g);
@@ -137,6 +142,10 @@ export function buildActions(app) {
     add(p + 'gridunmark', 'Beatgrid: quitar marca cercana', 'button', press(() => d.removeGridMarker()), g);
     add(p + 'gridleft', 'Beatgrid: mover −5 ms', 'button', press(() => d.gridShift(-5)), g);
     add(p + 'gridright', 'Beatgrid: mover +5 ms', 'button', press(() => d.gridShift(5)), g);
+    add(p + 'gridstart', 'Beatgrid: inicio del grid aquí', 'button', press(() => d.editGrid('start')), g);
+    add(p + 'gridbeat', 'Beatgrid: beat aquí', 'button', press(() => d.editGrid('beat')), g);
+    add(p + 'gridbar', 'Beatgrid: compás aquí', 'button', press(() => d.downbeatHere()), g);
+    add(p + 'gridundo', 'Beatgrid: deshacer', 'button', press(() => d.undoGrid()), g);
     add(p + 'load', 'Cargar pista seleccionada', 'button', press(() => app.loadSelected(d.idx)), g);
     add(p + 'eject', 'Expulsar', 'button', press(() => d.eject()), g);
     const ch = app.engine.channels[d.idx];
@@ -161,7 +170,10 @@ export function buildActions(app) {
   add('browseup', 'Pista anterior', 'button', (on) => { if (on) app.libraryUI.move(-1); }, 'Biblioteca');
   add('browsedown', 'Pista siguiente', 'button', (on) => { if (on) app.libraryUI.move(1); }, 'Biblioteca');
   add('browsepush', 'Pulsar encoder (cambiar panel)', 'button', (on) => { if (on) app.libraryUI.toggleFocus(); }, 'Biblioteca');
-  add('back', 'Back (ir a la barra lateral)', 'button', (on) => { if (on) app.libraryUI.toggleFocus('side'); }, 'Biblioteca');
+  add('back', 'Back (ir a la barra lateral; en ella, plegar subcrates)', 'button', (on) => { if (on && !app.libraryUI.sideKey(-1)) app.libraryUI.toggleFocus('side'); }, 'Biblioteca');
+  // en la barra lateral, ← / → pliegan y despliegan los subcrates
+  add('browseleft', '← Plegar subcrates / ir a la barra lateral', 'button', (on) => { if (on && !app.libraryUI.sideKey(-1)) app.libraryUI.toggleFocus('side'); }, 'Biblioteca');
+  add('browseright', '→ Desplegar subcrates / ir a la tabla', 'button', (on) => { if (on && !app.libraryUI.sideKey(1)) app.libraryUI.toggleFocus('table'); }, 'Biblioteca');
   add('panel', 'Mostrar/ocultar sampler', 'button', (on) => { if (on) app.togglePanel('sampler'); }, 'Biblioteca');
   add('prepare', 'Añadir a Prepare', 'button', (on) => { if (on) { const t = app.libraryUI.current(); if (t) app.library.addToPrepare([t.id]); } }, 'Biblioteca');
   add('openprepare', 'Abrir Prepare', 'button', (on) => { if (on) app.libraryUI.setView('prepare'); }, 'Biblioteca');

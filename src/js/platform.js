@@ -147,6 +147,33 @@ export const platform = {
     cancel() { return N && N.stems ? N.stems.cancel() : Promise.resolve(true); },
     onEvent(fn) { return N && N.stems ? N.stems.onEvent(fn) : () => {}; }
   },
+  // Spotify (solo metadatos; la petición la hace el proceso principal). Modo simulado para pruebas:
+  // si existe window.__nexuraSpotifyMock = { embed, api, login, logout, status } se usa en su lugar.
+  spotify: {
+    get mock() { return window.__nexuraSpotifyMock || null; },
+    get available() { return !!(this.mock || (N && N.spotify)); },
+    async embed(type, id) {
+      if (this.mock) return this.mock.embed(type, id);
+      if (N && N.spotify) return N.spotify.embed(type, id);
+      throw new Error('La importación de Spotify solo está disponible en la app de escritorio');
+    },
+    async api(url) {
+      if (this.mock) return this.mock.api(url);
+      if (N && N.spotify) return N.spotify.api(url);
+      throw new Error('La cuenta de Spotify solo se puede conectar en la app de escritorio');
+    },
+    async login(clientId) {
+      if (this.mock) return this.mock.login(clientId);
+      if (N && N.spotify) return N.spotify.login(clientId);
+      throw new Error('Disponible solo en la app de escritorio');
+    },
+    async logout() { if (this.mock) return this.mock.logout(); if (N && N.spotify) return N.spotify.logout(); return true; },
+    async status() {
+      if (this.mock) return this.mock.status();
+      if (N && N.spotify) return N.spotify.status();
+      return { connected: false, user: '' };
+    }
+  },
   yt: {
     async oembed(id) {
       if (N) return N.yt.oembed(id);

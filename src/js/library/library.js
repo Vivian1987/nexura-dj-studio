@@ -2,6 +2,7 @@
 import { Emitter, hashId, uid, debounce } from '../util.js';
 import { platform } from '../platform.js';
 import { energyFrom, ENERGY_VERSION } from '../analysis/analysis-core.js';
+import { normalizeParents, canMoveInto, crateTrackIds, deletePlan, descendantIds, flattenTree, parentId, ensurePath } from './crate-tree.js';
 
 export const SMART_FIELDS = {
   title: 'Título', artist: 'Artista', album: 'Álbum', genre: 'Género', bpm: 'BPM', camelot: 'Tonalidad (Camelot)',
@@ -15,7 +16,7 @@ function newTrack(info) {
   return {
     id: hashId(info.path), path: info.path, source: 'local',
     title: info.title || '', artist: info.artist || '', album: info.album || '', genre: info.genre || '',
-    year: info.year || '', comment: '', rating: 0,
+    year: info.year || '', comment: '', rating: 0, isrc: info.isrc || '',
     bpm: info.bpm ? parseFloat(info.bpm) || null : null, firstBeat: 0,
     key: info.key || '', camelot: '', keyTonic: null, keyMinor: null,
     duration: 0, size: info.size || 0, rmsDb: null,
@@ -42,6 +43,7 @@ export class Library extends Emitter {
     this.ytPlaylists = [];
     this.session = null;
     this.protected = false;   // lo fija la app desde settings.protectLibrary
+    this.subTracks = true;    // settings.crateSubTracks: una crate muestra también las pistas de sus subcrates
     this._byPath = null;      // índice ruta → pista (las pistas relocalizadas conservan su id antiguo)
     this.saveSoon = debounce(() => this.save(), 800);
   }
@@ -66,6 +68,8 @@ export class Library extends Emitter {
         this.tracks.set(t.id, t);
       }
       this.crates = d.crates || [];
+      // subcrates: las crates antiguas no tienen «parent» (= raíz); se reparan padres perdidos y ciclos
+      if (normalizeParents(this.crates)) migrated = true;
       this.smart = d.smart || [];
       this.history = d.history || [];
       this.prepare = d.prepare || [];
@@ -191,30 +195,58 @@ export class Library extends Emitter {
 
   // --- Crates
   // (las crates antiguas no tienen «created»: se ordenan por su posición, que es el orden en que se crearon)
-  createCrate(name) {
+  // Subcrates: crate.parent = id de la crate padre (null o ausente = raíz); ver crate-tree.js
+  createCrate(name, parent = null) {
     if (!this.guard('crate')) return null;
-    const c = { id: uid(), name, ids: [], created: Date.now() };
+    const c = { id: uid(), name, ids: [], created: Date.now(), parent: parent && this.crates.some(x => x.id === parent) ? parent : null };
     this.crates.push(c); this.saveSoon(); this.emit('change'); return c;
   }
+  crate(id) { return this.crates.find(c => c.id === id) || null; }
   renameCrate(id, name) { if (!this.guard('crate')) return; const c = this.crates.find(c => c.id === id); if (c) { c.name = name; this.saveSoon(); this.emit('change'); } }
-  deleteCrate(id) { if (!this.guard('crate')) return false; this.crates = this.crates.filter(c => c.id !== id); this.saveSoon(); this.emit('change'); return true; }
+  // mode 'all' = borra también los subcrates; 'lift' = los sube un nivel. Devuelve los ids borrados (o false)
+  deleteCrate(id, mode = 'all') {
+    if (!this.guard('crate')) return false;
+    const plan = deletePlan(this.crates, id, mode);
+    this.crates = plan.crates; this.saveSoon(); this.emit('change');
+    return plan.removed;
+  }
   setCrateColor(id, color) { if (!this.guard('crate')) return; const c = this.crates.find(c => c.id === id); if (c) { c.color = color || null; this.saveSoon(); this.emit('change'); } }
-  // Orden personalizado: mueve la crate «id» delante de «beforeId» (o al final)
-  moveCrate(id, beforeId) {
-    if (!this.guard('crate') || id === beforeId) return;
+  // Convierte «id» en subcrate de «parent» (null = raíz), al final de ese nivel; nunca dentro de sí misma
+  // ni de un descendiente (ciclos)
+  setCrateParent(id, parent) {
+    if (!this.guard('crate')) return false;
+    parent = parent || null;
+    if (!canMoveInto(this.crates, id, parent)) return false;
     const i = this.crates.findIndex(c => c.id === id);
-    if (i < 0) return;
     const [c] = this.crates.splice(i, 1);
-    const j = beforeId ? this.crates.findIndex(x => x.id === beforeId) : -1;
-    if (j < 0) this.crates.push(c); else this.crates.splice(j, 0, c);
+    c.parent = parent;
+    this.crates.push(c);
     this.saveSoon(); this.emit('change');
+    return true;
   }
-  sortedCrates(mode = 'custom') {
-    const list = this.crates.map((c, i) => ({ c, i }));
-    if (mode === 'alpha') list.sort((a, b) => a.c.name.localeCompare(b.c.name, 'es', { numeric: true, sensitivity: 'base' }));
-    else if (mode === 'created') list.sort((a, b) => (a.c.created || 0) - (b.c.created || 0) || a.i - b.i);
-    return list.map(x => x.c);
+  // Orden personalizado: coloca la crate «id» delante (o detrás, after) de «refId», en el nivel de «refId»
+  moveCrate(id, refId, after = false) {
+    if (!this.guard('crate') || id === refId) return false;
+    const ref = refId ? this.crate(refId) : null;
+    const parent = ref ? parentId(this.crates, ref) : null;
+    if (!canMoveInto(this.crates, id, parent)) return false;
+    const i = this.crates.findIndex(c => c.id === id);
+    if (i < 0) return false;
+    const [c] = this.crates.splice(i, 1);
+    c.parent = parent;
+    const j = ref ? this.crates.indexOf(ref) : -1;
+    if (j < 0) this.crates.push(c); else this.crates.splice(after ? j + 1 : j, 0, c);
+    this.saveSoon(); this.emit('change');
+    return true;
   }
+  // Todas las crates en orden de árbol (cada nivel según «mode»); con depth para sangrar menús
+  sortedCrates(mode = 'custom') { return flattenTree(this.crates, mode, null, true).map(x => x.c); }
+  crateTree(mode = 'custom', collapsed = null, all = false) { return flattenTree(this.crates, mode, collapsed, all); }
+  subcrateIds(id) { return descendantIds(this.crates, id); }
+  // Pistas de la crate (ids): con subs (por defecto, el ajuste) también las de sus subcrates, sin duplicar
+  crateTrackIds(id, subs = this.subTracks) { return crateTrackIds(this.crates, id, subs); }
+  // Busca o crea la ruta de nombres [«Dance», «2024»] bajo «root»; con la biblioteca protegida no crea
+  ensureCratePath(names, root = null) { return ensurePath(this.crates, names, (name, p) => this.createCrate(name, p), root); }
   cratesOf(id) { return this.crates.filter(c => c.ids.includes(id)); }
   addToCrate(id, ids) {
     if (!this.guard('crateTracks')) return false;
@@ -224,11 +256,23 @@ export class Library extends Emitter {
     this.saveSoon(); this.emit('change');
     return true;
   }
-  removeFromCrate(id, ids) {
+  // Sustituye el contenido de una crate conservando el orden dado (listas importadas que se actualizan)
+  setCrateIds(id, ids) {
+    if (!this.guard('crateTracks')) return false;
+    const c = this.crates.find(c => c.id === id);
+    if (!c) return false;
+    c.ids = [...new Set(ids)].filter(i => this.tracks.has(i));
+    this.saveSoon(); this.emit('change');
+    return true;
+  }
+  // Crate creada a partir de una lista de Spotify (crate.spotify.key = 'playlist:<id>')
+  crateBySpotify(key) { return this.crates.find(c => c.spotify && c.spotify.key === key) || null; }
+  // deep: quita también de los subcrates (en la vista de una crate padre que muestra sus pistas)
+  removeFromCrate(id, ids, deep = false) {
     if (!this.guard('crateTracks')) return;
     const c = this.crates.find(c => c.id === id);
     if (!c) return;
-    c.ids = c.ids.filter(i => !ids.includes(i));
+    for (const x of [c, ...(deep ? descendantIds(this.crates, id).map(d => this.crate(d)) : [])]) x.ids = x.ids.filter(i => !ids.includes(i));
     this.saveSoon(); this.emit('change');
   }
   deleteYtPlaylist(id) { if (!this.guard('crate')) return false; this.ytPlaylists = this.ytPlaylists.filter(p => p.id !== id); this.saveSoon(); this.emit('change'); return true; }
@@ -310,7 +354,7 @@ export class Library extends Emitter {
     if (viewId === 'prepare') return this.prepare.map(i => this.tracks.get(i)).filter(Boolean);
     if (viewId === 'yt-all') return [...this.tracks.values()].filter(t => t.source === 'youtube');
     const [kind, id] = viewId.split(':');
-    if (kind === 'crate') { const c = this.crates.find(c => c.id === id); return c ? c.ids.map(i => this.tracks.get(i)).filter(Boolean) : []; }
+    if (kind === 'crate') return this.crateTrackIds(id).map(i => this.tracks.get(i)).filter(Boolean);
     if (kind === 'smart') { const s = this.smart.find(s => s.id === id); return s ? this.smartTracks(s) : []; }
     if (kind === 'yt') { const p = this.ytPlaylists.find(p => p.id === id); return p ? p.ids.map(i => this.tracks.get(i)).filter(Boolean) : []; }
     if (kind === 'history') {

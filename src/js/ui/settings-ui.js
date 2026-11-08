@@ -5,7 +5,7 @@ import { describeKey, REL_NAMES } from '../midi/midi.js';
 import { parseMixxxMapping } from '../midi/mixxx-import.js';
 import { MidiWizard } from './midi-wizard.js';
 
-const TABS = { audio: 'Audio', ai: '✨ IA', play: 'Reproducción', library: 'Biblioteca', midi: 'MIDI / Controladores', expansions: 'Expansiones', youtube: 'YouTube', keys: 'Atajos', about: 'Acerca de' };
+const TABS = { audio: 'Audio', ai: '✨ IA', play: 'Reproducción', library: 'Biblioteca', midi: 'MIDI / Controladores', expansions: 'Expansiones', youtube: 'YouTube', spotify: 'Spotify', keys: 'Atajos', about: 'Acerca de' };
 
 export class SettingsUI {
   constructor(app) { this.app = app; this.tab = 'audio'; }
@@ -142,6 +142,8 @@ export class SettingsUI {
       this.row('Cuantización (Q)', this.toggle('quantize'), 'Hot cues, loops y saltos se ajustan al beat'),
       this.row('Cue Loops', this.toggle('cueLoops'), 'Con un loop activo, un hot cue vacío guarda el loop; al pulsarlo salta y lo activa. Hay además un modo de pads «Cue Loop» con 8 cues con loop propios'),
       this.row('Retorno del slip (ms)', this.number('slipRelease', 0, 1000, 10), 'Al soltar el slip (scratch, roll, censor o loop), fundido hasta la posición en la que iría la pista. 0 = salto inmediato'),
+      this.row('Stem Slip', select({ mute: 'Silenciar el stem mientras se mantiene', loop: 'Repetir el stem en loop mientras se mantiene' }, s.stemSlipMode || 'mute', (v) => app.setSetting('stemSlipMode', v)), 'Modo de pads Stems con SLIP activado (o acciones MIDI «Stem Slip»): al soltar, el stem vuelve en su sitio'),
+      this.row('Beats del loop de Stem Slip', select({ 0.25: '1/4', 0.5: '1/2', 1: '1', 2: '2' }, String(s.stemSlipBeats || 1), (v) => app.setSetting('stemSlipBeats', Number(v)))),
       this.row('Sync con alineación de fase', this.toggle('syncPhase')),
       this.row('Auto-gain al cargar', this.toggle('autoGain'), 'Iguala el volumen según el análisis'),
       this.row('Al cargar sobre un deck que está sonando', select({ play: 'Sustituir y seguir sonando', pause: 'Sustituir y dejar en pausa', block: 'No permitir (proteger en directo)' }, s.loadOnPlaying || 'play', (v) => app.setSetting('loadOnPlaying', v)), 'Para directo puedes protegerlo y evitar cambiar por error la pista que suena'),
@@ -161,7 +163,8 @@ export class SettingsUI {
       this.row('Proteger biblioteca', this.toggle('protectLibrary'), 'No se pueden borrar ni renombrar pistas, crates ni smart crates, ni editar etiquetas, valoraciones, BPM o beatgrid, ni mover pistas entre crates. Sí se puede cargar, buscar, ordenar, analizar pistas nuevas y usar Prepare e Historial. También con el candado 🔒 de la biblioteca'),
       this.row('Mismas columnas en todos los crates', this.toggle('libColsSame'), 'Si lo desactivas, cada crate recuerda sus columnas (clic derecho en la cabecera de la tabla para elegirlas)'),
       this.row('Tamaño de la carátula', select({ small: 'Pequeña', medium: 'Mediana' }, s.libArtSize || 'small', (v) => app.setSetting('libArtSize', v)), 'La columna «Carátula» está oculta por defecto'),
-      this.row('Orden de las crates', select({ custom: 'Personalizado (arrastrar)', alpha: 'Alfabético', created: 'Fecha de creación' }, s.crateSort || 'custom', (v) => { app.setSetting('crateSort', v); app.libraryUI.renderSide(); })),
+      this.row('Orden de las crates', select({ custom: 'Personalizado (arrastrar)', alpha: 'Alfabético', created: 'Fecha de creación' }, s.crateSort || 'custom', (v) => { app.setSetting('crateSort', v); app.libraryUI.renderSide(); }), 'Se aplica dentro de cada nivel de subcrates'),
+      this.row('Mostrar pistas de los subcrates en el crate padre', this.toggle('crateSubTracks'), 'Al abrir «Dance» se ven también las pistas de «Dance › 2024», «Dance › Tech House»… sin repetir. El contador y la búsqueda siguen la misma regla'),
       this.row('Archivos perdidos', btn('Relocalizar archivos perdidos…', { cls: 'small', onClick: () => { app.closeModal(); app.relocateMissing(); } }), 'Busca en una carpeta las pistas que se han movido y conserva cues, beatgrid, valoración y crates'));
   }
 
@@ -355,6 +358,52 @@ export class SettingsUI {
             this.render();
           }
         })));
+  }
+
+  async page_spotify(p) {
+    const app = this.app, s = app.settings;
+    const { SPOTIFY_REDIRECT_URI } = await import('../spotify/spotify-core.js');
+    const cid = el('input', { value: s.spotifyClientId || '', class: 'wide', placeholder: 'Client ID (32 caracteres)' });
+    cid.addEventListener('change', () => app.setSetting('spotifyClientId', cid.value.trim()));
+    const st = await app.spotify.status();
+    const redirect = st.redirectUri || SPOTIFY_REDIRECT_URI;
+    const statusEl = el('span', { class: 'status-pill' + (st.connected ? ' ok' : '') }, st.connected ? `Cuenta de Spotify conectada${st.user ? ' · ' + st.user : ''}` : 'Sin cuenta conectada');
+    const copy = btn('Copiar', { cls: 'micro', onClick: async () => { try { await navigator.clipboard.writeText(redirect); toast('Redirect URI copiado', 'ok'); } catch (_) { toast('No se pudo copiar: selecciónalo y cópialo a mano', 'warn'); } } });
+    p.append(
+      el('h3', {}, 'Importar listas de Spotify'),
+      el('p', { class: 'hint' }, 'Convierte una lista, álbum o canción de Spotify en una crate: se leen solo los metadatos (título, artistas, duración, ISRC y carátula) y se buscan en tu música. Las que no tengas puedes reproducirlas con el reproductor oficial de YouTube o buscarlas para comprarlas. Nunca se descarga ni se extrae audio de Spotify ni de YouTube.'),
+      el('div', { class: 'row' }, btn('+ Importar lista de Spotify…', { cls: 'small primary', onClick: () => { app.closeModal(); app.spotifyImportDialog(); } })),
+      el('h3', {}, 'Sin cuenta'),
+      el('p', { class: 'hint' }, 'Pega el enlace de una lista o álbum públicos (Compartir → Copiar enlace). Sin cuenta conectada se leen como mucho las primeras 100 pistas de cada lista.'),
+      el('h3', {}, 'Conectar tu cuenta (opcional)'),
+      el('p', { class: 'hint' }, 'Para importar listas completas (más de 100 pistas), tus listas privadas y «Mis listas». Necesitas crear una app gratuita de Spotify una sola vez:'),
+      el('ol', { class: 'sp-steps' },
+        el('li', {}, 'Entra en developer.spotify.com/dashboard con tu cuenta de Spotify y pulsa «Create app».'),
+        el('li', {}, 'Nombre y descripción libres (por ejemplo «Nexura DJ Studio»). En «Redirect URIs» añade exactamente esta dirección y pulsa «Add»:'),
+        el('li', { class: 'sp-redirect' }, el('code', {}, redirect), copy),
+        el('li', {}, 'En «Which API/SDKs are you planning to use?» marca «Web API», acepta las condiciones y guarda.'),
+        el('li', {}, 'Abre «Settings» de la app, copia el «Client ID» y pégalo aquí debajo. No hace falta el «Client secret».'),
+        el('li', {}, 'Mientras la app esté en modo de desarrollo, solo pueden conectarse las cuentas que añadas en «User Management».')),
+      el('div', { class: 'row' }, btn('Abrir developer.spotify.com', { cls: 'small', onClick: () => app.platform.openExternal('https://developer.spotify.com/dashboard') })),
+      this.row('Client ID', cid, 'Se guarda en los ajustes; la sesión (tokens) se guarda cifrada en este equipo'),
+      el('div', { class: 'row' }, statusEl,
+        btn(st.connected ? 'Desconectar' : 'Conectar cuenta', {
+          cls: 'small', onClick: async () => {
+            try {
+              if (st.connected) await app.platform.spotify.logout();
+              else {
+                const id = cid.value.trim();
+                if (!id) return toast('Introduce el Client ID de tu app de Spotify', 'warn');
+                app.setSetting('spotifyClientId', id);
+                toast('Se ha abierto el navegador para iniciar sesión en Spotify…', 'info', 6000);
+                const r = await app.platform.spotify.login(id);
+                toast(`Cuenta de Spotify conectada${r && r.user ? ' · ' + r.user : ''}`, 'ok');
+              }
+            } catch (e) { toast(e.message, 'error', 7000); }
+            this.render();
+          }
+        })),
+      el('p', { class: 'hint' }, 'Spotify no deja leer con la API algunas listas creadas por Spotify (por ejemplo, las personalizadas): en ese caso se usa la página pública, con el límite de 100 pistas.'));
   }
 
   page_keys(p) {

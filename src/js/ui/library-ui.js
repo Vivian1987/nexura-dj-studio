@@ -2,6 +2,7 @@
 import { el, fmtTime, camelotCompatible, debounce, uid, keyColor, CUE_COLORS } from '../util.js';
 import { btn, select } from './controls.js';
 import { SMART_FIELDS, SMART_OPS, CRATE_SORTS } from '../library/library.js';
+import { cratePath, pathLabel, effectiveColor } from '../library/crate-tree.js';
 import { COLUMNS, COL_BY_KEY, DEFAULT_COLS, visibleColumns, columnTemplate, columnsFor } from '../library/columns.js';
 import { ENERGY_MODES } from '../ai/assistant.js';
 
@@ -46,13 +47,19 @@ export class LibraryUI {
 
   build() {
     this.side = el('aside', { class: 'lib-side', tabindex: 0 });
-    this.searchIn = el('input', { class: 'search', type: 'search', placeholder: 'Buscar (título, artista, BPM, tonalidad…) o pegar un enlace de YouTube  ·  Ctrl+F' });
+    this.searchIn = el('input', { class: 'search', type: 'search', placeholder: 'Buscar (título, artista, BPM, tonalidad…) o pegar un enlace de YouTube o Spotify  ·  Ctrl+F' });
     this.searchIn.addEventListener('input', debounce(() => {
       const v = this.searchIn.value.trim();
       // Si se pega un enlace de YouTube en el buscador, se importa directamente
       if (/^(https?:\/\/)?(www\.|m\.|music\.)?(youtube\.com|youtu\.be)\//i.test(v)) {
         this.searchIn.value = ''; this.search = '';
         this.app.ytImport(v);
+        return;
+      }
+      // y uno de Spotify abre el diálogo de importación
+      if (/^(https?:\/\/)?(open|play)\.spotify\.com\/|^spotify:(user:[^:]+:)?(playlist|album|track):/i.test(v)) {
+        this.searchIn.value = ''; this.search = '';
+        this.app.spotifyImportDialog(v);
         return;
       }
       this.search = this.searchIn.value; this.refresh();
@@ -101,55 +108,167 @@ export class LibraryUI {
   // ------------------------------------------------------------ barra lateral
   sideItem(id, label, count, opts = {}) {
     const it = el('div', { class: 'side-item' + (id === this.viewId ? ' on' : '') + (opts.cls ? ' ' + opts.cls : ''), dataset: { view: id }, title: opts.title || null },
+      opts.twisty || null,
       el('span', { class: 'si-ico', style: opts.color ? { color: opts.color } : null }, opts.icon || '•'), el('span', { class: 'si-label' }, label), count != null ? el('span', { class: 'si-count' }, String(count)) : null);
+    if (opts.depth) it.style.setProperty('--depth', opts.depth);
     it.addEventListener('click', () => this.setView(id));
     if (opts.menu) it.addEventListener('contextmenu', (e) => { e.preventDefault(); this.app.contextMenu(e, typeof opts.menu === 'function' ? opts.menu() : opts.menu); });
-    // orden personalizado de crates: arrastrar una crate sobre otra la coloca delante
-    if (opts.crateId && this.app.settings.crateSort === 'custom') {
+    // crates: arrastrar una crate sobre otra la convierte en su subcrate; con el orden personalizado,
+    // soltarla en el borde superior/inferior la coloca delante/detrás en ese nivel
+    if (opts.crateId) {
       it.draggable = true;
       it.addEventListener('dragstart', (e) => { e.dataTransfer.setData('text/nexura-crate', opts.crateId); e.dataTransfer.effectAllowed = 'move'; });
     }
+    const zone = (e) => {
+      if (this.app.settings.crateSort !== 'custom') return 'into';
+      const r = it.getBoundingClientRect(), y = (e.clientY - r.top) / r.height;
+      return y < 0.25 ? 'before' : y > 0.75 ? 'after' : 'into';
+    };
+    const clear = () => it.classList.remove('drop', 'drop-before', 'drop-after');
     if (opts.drop || opts.crateId) {
       const ok = (e) => (opts.drop && (e.dataTransfer.types.includes('text/nexura-track') || e.dataTransfer.types.includes('Files'))) || (opts.crateId && e.dataTransfer.types.includes('text/nexura-crate'));
-      it.addEventListener('dragover', (e) => { if (ok(e)) { e.preventDefault(); it.classList.add('drop'); } });
-      it.addEventListener('dragleave', () => it.classList.remove('drop'));
+      it.addEventListener('dragover', (e) => {
+        if (!ok(e)) return;
+        e.preventDefault(); clear();
+        const z = opts.crateId && e.dataTransfer.types.includes('text/nexura-crate') ? zone(e) : 'into';
+        it.classList.add(z === 'into' ? 'drop' : 'drop-' + z);
+      });
+      it.addEventListener('dragleave', clear);
       it.addEventListener('drop', async (e) => {
-        e.preventDefault(); it.classList.remove('drop');
+        e.preventDefault(); clear();
         const crate = e.dataTransfer.getData('text/nexura-crate');
-        if (crate && opts.crateId) return this.lib.moveCrate(crate, opts.crateId);
+        if (crate && opts.crateId) return this.dropCrate(crate, opts.crateId, zone(e));
         if (!opts.drop) return;
         const ids = e.dataTransfer.getData('text/nexura-track');
         if (ids) opts.drop(ids.split(','));
-        else if (e.dataTransfer.files.length) { const added = await this.dropFiles(e.dataTransfer.files); if (added.length) opts.drop(added.map(t => t.id)); }
+        else if (e.dataTransfer.files.length) { const added = await this.dropFiles(e.dataTransfer.files, null, opts.crateId || null); if (added.length) opts.drop(added.map(t => t.id)); }
       });
     }
     return it;
   }
   section(title, ...actions) { return el('div', { class: 'side-sec' }, el('span', {}, title), el('span', { class: 'sec-actions' }, ...actions)); }
 
-  // Archivos soltados: las listas .m3u/.m3u8 se importan como crate; el resto, como pistas
-  async dropFiles(fileList, crateId = null) {
+  // Soltar una crate: dentro de otra (subcrate) o delante/detrás de ella en su nivel
+  dropCrate(id, target, z) {
+    const L = this.lib;
+    if (id === target) return;
+    if (z === 'into') {
+      if (L.subcrateIds(id).includes(target)) return this.app.toast('No se puede meter una crate dentro de uno de sus subcrates', 'warn');
+      if (L.setCrateParent(id, target)) this.expandCrate(target);
+    } else if (!L.moveCrate(id, target, z === 'after') && !L.protected) this.app.toast('No se puede meter una crate dentro de uno de sus subcrates', 'warn');
+  }
+
+  // Archivos soltados: las listas .m3u/.m3u8 se importan como crate (dentro de «listParent» si se sueltan
+  // sobre una crate de la barra lateral); el resto, como pistas
+  async dropFiles(fileList, crateId = null, listParent = null) {
     const files = [...fileList];
     const lists = files.filter(f => /\.m3u8?$/i.test(f.name));
-    if (lists.length) await this.app.importPlaylists(await Promise.all(lists.map(f => this.app.platform.playlistFromFile(f))));
+    if (lists.length) await this.app.importPlaylists(await Promise.all(lists.map(f => this.app.platform.playlistFromFile(f))), listParent);
     const rest = files.filter(f => !lists.includes(f));
     return rest.length ? this.app.importDropped(rest, crateId) : [];
   }
 
-  crateMenu(c) {
+  // --- árbol de crates (subcrates)
+  collapsedCrates() { return new Set(this.app.settings.crateCollapsed || []); }
+  setCrateOpen(id, open) {
+    const s = this.collapsedCrates();
+    if (open === !s.has(id)) return;
+    if (open) s.delete(id); else s.add(id);
+    this.app.setSetting('crateCollapsed', [...s].filter(x => this.lib.crate(x)));
+    this.renderSide();
+  }
+  // despliega los antepasados de «id» (y la propia) para que se vea
+  expandCrate(id) {
+    const s = this.collapsedCrates(), path = cratePath(this.lib.crates, id);
+    if (!path.some(c => s.has(c.id))) return;
+    for (const c of path) s.delete(c.id);
+    this.app.setSetting('crateCollapsed', [...s]);
+    this.renderSide();
+  }
+  crateLabel(c) { return c ? pathLabel(this.lib.crates, c.id) : ''; }
+  // Lista de crates para submenús («Añadir a crate», «Mover a…»), sangrada según la profundidad
+  crateChoices(fn, filter = null) {
+    return this.lib.crateTree(this.app.settings.crateSort, null, true).filter(x => !filter || filter(x.c)).map(({ c, depth }) => ({
+      label: ' '.repeat(depth) + (depth ? '└ ' : '') + c.name, color: effectiveColor(this.lib.crates, c.id).color, fn: () => fn(c)
+    }));
+  }
+  async newCrate(parent = null) {
     const L = this.lib;
+    if (!L.guard('crate')) return null;
+    const n = await this.app.prompt(parent ? `Nuevo subcrate en «${this.crateLabel(L.crate(parent))}»` : 'Nombre de la crate', '');
+    const c = n && L.createCrate(n, parent);
+    if (c) { if (parent) this.expandCrate(parent); this.setView('crate:' + c.id); }
+    return c;
+  }
+  async deleteCrateAsk(c) {
+    const L = this.lib;
+    if (!L.guard('crate')) return;
+    const subs = L.subcrateIds(c.id);
+    let mode = 'all';
+    if (subs.length) {
+      const r = await this.app.modal('Eliminar crate', el('p', {}, `«${this.crateLabel(c)}» tiene ${subs.length} subcrate(s). ¿Qué hago con ellos? Las pistas siguen en la biblioteca.`), ['Cancelar', 'Borrar también los subcrates', 'Subirlos un nivel']);
+      if (r < 1) return;
+      mode = r === 1 ? 'all' : 'lift';   // el botón principal (Intro) es el que no borra nada más
+    } else if (!await this.app.confirm(`¿Eliminar la crate «${this.crateLabel(c)}»? Las pistas siguen en la biblioteca.`)) return;
+    const removed = L.deleteCrate(c.id, mode);
+    if (removed && removed.some(id => this.viewId === 'crate:' + id)) this.setView('all');
+  }
+
+  crateMenu(c) {
+    const L = this.lib, parent = L.crate(c.parent);
+    const banned = new Set([c.id, ...L.subcrateIds(c.id)]);
     return [
+      { label: 'Nuevo subcrate…', fn: () => this.newCrate(c.id) },
       { label: 'Renombrar…', fn: async () => { if (!L.guard('crate')) return; const n = await this.app.prompt('Nombre de la crate', c.name); if (n) L.renameCrate(c.id, n); } },
-      { label: 'Color', sub: [...CUE_COLORS.map(col => ({ label: '●', color: col, fn: () => L.setCrateColor(c.id, col) })), { label: 'Sin color', fn: () => L.setCrateColor(c.id, null) }] },
-      { label: 'Ordenar crates', sub: Object.entries(CRATE_SORTS).map(([k, v]) => ({ label: (this.app.settings.crateSort === k ? '✓ ' : ' ') + v, fn: () => this.setCrateSort(k) })) },
-      ...(this.app.stems.available ? [{ label: '🎚 Separar stems de la crate (segundo plano)', fn: () => { const n = this.app.stems.enqueue(c.ids.map(id => L.get(id))); this.app.toast(n ? `${n} pista(s) en cola de stems` : 'Todas las pistas de la crate ya tienen stems', n ? 'ok' : 'info'); } }] : []),
-      { label: 'Eliminar crate', danger: true, fn: async () => { if (!L.guard('crate')) return; if (await this.app.confirm(`¿Eliminar la crate «${c.name}»? Las pistas siguen en la biblioteca.`) && L.deleteCrate(c.id) && this.viewId === 'crate:' + c.id) this.setView('all'); } }
+      { label: 'Color', sub: [...CUE_COLORS.map(col => ({ label: '●', color: col, fn: () => L.setCrateColor(c.id, col) })), { label: parent ? 'Sin color (el de la crate padre)' : 'Sin color', fn: () => L.setCrateColor(c.id, null) }] },
+      { label: 'Mover a…', sub: [
+        { label: (parent ? '' : '✓ ') + 'Raíz (CRATES)', fn: () => L.setCrateParent(c.id, null) },
+        ...this.crateChoices((p) => { if (L.setCrateParent(c.id, p.id)) this.expandCrate(p.id); }, (x) => !banned.has(x.id) && x.id !== c.parent)
+      ] },
+      { label: '⇩ Importar M3U aquí (como subcrate)…', fn: () => this.app.importM3u(c.id) },
+      ...(c.spotify ? [
+        { label: 'Revisar importación de Spotify…', fn: () => this.app.spotifyCrate(c.id, false) },
+        { label: 'Actualizar desde Spotify', fn: () => this.app.spotifyCrate(c.id, true) }
+      ] : []),
+      { label: 'Ordenar crates', sub: Object.entries(CRATE_SORTS).map(([k, v]) => ({ label: (this.app.settings.crateSort === k ? '✓ ' : ' ') + v, fn: () => this.setCrateSort(k) })) },
+      ...(this.app.stems.available ? [{ label: '🎚 Separar stems de la crate (segundo plano)', fn: () => { const n = this.app.stems.enqueue(L.crateTrackIds(c.id).map(id => L.get(id))); this.app.toast(n ? `${n} pista(s) en cola de stems` : 'Todas las pistas de la crate ya tienen stems', n ? 'ok' : 'info'); } }] : []),
+      { label: 'Eliminar crate', danger: true, fn: () => this.deleteCrateAsk(c) }
     ];
   }
   setCrateSort(k) { this.app.setSetting('crateSort', k); this.renderSide(); }
+  // «N pistas · duración»: con el ajuste de subcrates incluye las de sus descendientes (sin duplicar)
   crateInfo(c) {
-    const ts = c.ids.map(i => this.lib.get(i)).filter(Boolean);
+    const ts = this.lib.crateTrackIds(c.id).map(i => this.lib.get(i)).filter(Boolean);
     return `${ts.length} pistas · ${fmtTotal(ts.reduce((s, t) => s + (t.duration || 0), 0))}`;
+  }
+  crateSideItems() {
+    const L = this.lib;
+    return L.crateTree(this.app.settings.crateSort, this.collapsedCrates()).map(({ c, depth, hasKids, open }) => {
+      const { color, inherited } = effectiveColor(L.crates, c.id);
+      const twisty = el('span', { class: 'si-tw', title: hasKids ? (open ? 'Plegar' : 'Desplegar') : null }, hasKids ? (open ? '▾' : '▸') : '');
+      if (hasKids) twisty.addEventListener('click', (e) => { e.stopPropagation(); this.setCrateOpen(c.id, !open); });
+      const it = this.sideItem('crate:' + c.id, c.name, L.crateTrackIds(c.id).length, {
+        icon: color ? '●' : c.spotify ? '♪' : '▣', color, depth, twisty, crateId: c.id,
+        cls: 'crate' + (inherited ? ' inherit' : ''),
+        title: (depth ? this.crateLabel(c) + '\n' : '') + this.crateInfo(c), drop: (ids) => L.addToCrate(c.id, ids),
+        menu: () => this.crateMenu(c)
+      });
+      if (hasKids) it.dataset.kids = open ? 'open' : 'closed';
+      return it;
+    });
+  }
+  // Cabecera «CRATES»: soltar aquí una crate la devuelve a la raíz
+  cratesSection(...actions) {
+    const sec = this.section('CRATES', ...actions);
+    sec.title = 'Suelta aquí una crate para devolverla a la raíz';
+    sec.addEventListener('dragover', (e) => { if (e.dataTransfer.types.includes('text/nexura-crate')) { e.preventDefault(); sec.classList.add('drop'); } });
+    sec.addEventListener('dragleave', () => sec.classList.remove('drop'));
+    sec.addEventListener('drop', (e) => {
+      sec.classList.remove('drop');
+      const id = e.dataTransfer.getData('text/nexura-crate');
+      if (id) { e.preventDefault(); this.lib.setCrateParent(id, null); }
+    });
+    return sec;
   }
   // «Reiniciar pistas tocadas» (de la sesión mostrada o de todas)
   resetPlayedMenu(e) {
@@ -180,7 +299,8 @@ export class LibraryUI {
       el('div', { class: 'side-actions' },
         btn('+ Lista', { cls: 'micro', onClick: () => this.app.ytImportDialog(), title: 'Importar una lista de reproducción de YouTube' }),
         btn('Mis listas', { cls: 'micro', onClick: () => this.app.ytMyPlaylists(), title: 'Listas de tu cuenta de Google' }),
-        btn('Buscar', { cls: 'micro', onClick: () => this.app.ytSearchDialog(), title: 'Buscar vídeos en YouTube' })),
+        btn('Buscar', { cls: 'micro', onClick: () => this.app.ytSearchDialog(), title: 'Buscar vídeos en YouTube' }),
+        btn('+ Spotify', { cls: 'micro sp-side', onClick: () => this.app.spotifyImportDialog(), title: 'Importar una lista de Spotify como crate (solo títulos y artistas): se buscan en tu música y, las que falten, en YouTube o para comprar' })),
       this.sideItem('yt-all', 'Todos los vídeos', yt, { icon: '▶', cls: 'yt' }),
       ...L.ytPlaylists.map(p => this.sideItem('yt:' + p.id, p.title, p.ids.length, {
         icon: '▶', cls: 'yt',
@@ -189,14 +309,11 @@ export class LibraryUI {
           { label: 'Eliminar lista', fn: () => { if (L.deleteYtPlaylist(p.id) && this.viewId === 'yt:' + p.id) this.setView('yt-all'); } }
         ]
       })),
-      this.section('CRATES',
-        btn('⇩M3U', { cls: 'micro', title: 'Importar una lista .m3u / .m3u8 como crate (también puedes arrastrar el archivo)', onClick: () => this.app.importM3u() }),
-        btn('⇅', { cls: 'micro', title: 'Ordenar crates', onClick: (e) => this.app.contextMenu(e, Object.entries(CRATE_SORTS).map(([k, v]) => ({ label: (this.app.settings.crateSort === k ? '✓ ' : ' ') + v, fn: () => this.setCrateSort(k) }))) }),
-        btn('+', { cls: 'micro', title: 'Nueva crate', onClick: async () => { if (!L.guard('crate')) return; const n = await this.app.prompt('Nombre de la crate', ''); if (n) { const c = L.createCrate(n); if (c) this.setView('crate:' + c.id); } } })),
-      ...L.sortedCrates(this.app.settings.crateSort).map(c => this.sideItem('crate:' + c.id, c.name, c.ids.length, {
-        icon: c.color ? '●' : '▣', color: c.color, crateId: c.id, title: this.crateInfo(c), drop: (ids) => L.addToCrate(c.id, ids),
-        menu: () => this.crateMenu(c)
-      })),
+      this.cratesSection(
+        btn('⇩M3U', { cls: 'micro', title: 'Importar una lista .m3u / .m3u8 como crate (también puedes arrastrar el archivo; soltada sobre una crate, se crea como subcrate)', onClick: () => this.app.importM3u() }),
+        btn('⇅', { cls: 'micro', title: 'Ordenar crates (dentro de cada nivel)', onClick: (e) => this.app.contextMenu(e, Object.entries(CRATE_SORTS).map(([k, v]) => ({ label: (this.app.settings.crateSort === k ? '✓ ' : ' ') + v, fn: () => this.setCrateSort(k) }))) }),
+        btn('+', { cls: 'micro', title: 'Nueva crate (para un subcrate: clic derecho en la crate → «Nuevo subcrate…» o arrastra una crate sobre otra)', onClick: () => this.newCrate(null) })),
+      ...this.crateSideItems(),
       this.section('SMART CRATES', btn('+', { cls: 'micro', title: 'Nueva smart crate', onClick: () => this.smartEditor() })),
       ...L.smart.map(sc => this.sideItem('smart:' + sc.id, sc.name, null, {
         icon: '✦',
@@ -234,7 +351,7 @@ export class LibraryUI {
     if (id === 'ai:next') return 'Siguiente pista (IA)';
     if (id === 'yt-all') return 'YouTube';
     const [k, v] = id.split(':');
-    if (k === 'crate') return (L.crates.find(c => c.id === v) || {}).name || 'Crate';
+    if (k === 'crate') return this.crateLabel(L.crate(v)) || 'Crate';
     if (k === 'smart') return (L.smart.find(c => c.id === v) || {}).name || 'Smart crate';
     if (k === 'yt') return (L.ytPlaylists.find(c => c.id === v) || {}).title || 'Lista';
     if (k === 'history') return 'Historial';
@@ -257,7 +374,7 @@ export class LibraryUI {
     const name = this.viewName();
     this.viewTitle.textContent = name;
     this.searchIn.placeholder = this.viewId === 'all' || this.viewId === 'everything'
-      ? 'Buscar (título, artista, BPM, tonalidad…) o pegar un enlace de YouTube  ·  Ctrl+F'
+      ? 'Buscar (título, artista, BPM, tonalidad…) o pegar un enlace de YouTube o Spotify  ·  Ctrl+F'
       : `Buscar en «${name}» (título, artista, BPM, tonalidad…)  ·  Ctrl+F`;
     this.refreshLock();
     for (const h of this.head.children) {
@@ -553,6 +670,19 @@ export class LibraryUI {
     if (top < st) this.scroller.scrollTop = top;
     else if (top + RH > st + h) this.scroller.scrollTop = top + RH - h;
   }
+  // ← / → (teclado o botones MIDI) con la barra lateral activa: ← pliega la crate abierta o sube a su
+  // crate padre; → despliega. Devuelve false si no hace nada (→ pasa entonces a la tabla).
+  sideKey(dir) {
+    if (this.focus !== 'side') return false;
+    const c = this.viewId.startsWith('crate:') ? this.lib.crate(this.viewId.slice(6)) : null;
+    if (!c) return dir < 0;
+    const hasKids = this.lib.subcrateIds(c.id).length > 0, open = hasKids && !this.collapsedCrates().has(c.id);
+    if (dir > 0) { if (!hasKids || open) return false; this.setCrateOpen(c.id, true); return true; }
+    if (open) this.setCrateOpen(c.id, false);
+    else if (this.lib.crate(c.parent)) this.setView('crate:' + c.parent);
+    this.side.querySelector('.side-item.on')?.scrollIntoView({ block: 'nearest' });
+    return true;
+  }
   toggleFocus(to) {
     this.focus = to || (this.focus === 'side' ? 'table' : 'side');
     this.root.classList.toggle('side-focus', this.focus === 'side');
@@ -569,7 +699,7 @@ export class LibraryUI {
       { label: 'Cargar en Deck 2', fn: () => app.loadToDeck(one.id, 1) },
       ...(app.deckCount === 4 ? [{ label: 'Cargar en Deck 3', fn: () => app.loadToDeck(one.id, 2) }, { label: 'Cargar en Deck 4', fn: () => app.loadToDeck(one.id, 3) }] : []),
       { label: 'Añadir a Prepare', fn: () => L.addToPrepare(ids) },
-      { label: 'Añadir a crate', sub: [...L.sortedCrates(app.settings.crateSort).map(c => ({ label: c.name, color: c.color || null, fn: () => L.addToCrate(c.id, ids) })), { label: '+ Nueva crate…', fn: async () => { if (!L.guard('crate')) return; const n = await app.prompt('Nombre de la crate', ''); const c = n && L.createCrate(n); if (c) L.addToCrate(c.id, ids); } }] },
+      { label: 'Añadir a crate', sub: [...this.crateChoices((c) => L.addToCrate(c.id, ids)), { label: '+ Nueva crate…', fn: async () => { if (!L.guard('crate')) return; const n = await app.prompt('Nombre de la crate', ''); const c = n && L.createCrate(n); if (c) L.addToCrate(c.id, ids); } }] },
       { label: 'Mostrar en qué crates está', fn: () => this.showCratesOf(one) },
       { label: 'Valoración', sub: [5, 4, 3, 2, 1, 0].map(n => ({ label: n ? '★'.repeat(n) + '☆'.repeat(5 - n) : 'Sin valoración', fn: () => L.setRating(ids, n) })) },
       { label: (one && one.explicit ? '✓ ' : ' ') + 'Explicit (E)', fn: () => L.setExplicit(ids, !(one && one.explicit)) }
@@ -593,7 +723,11 @@ export class LibraryUI {
     if (one && one.source === 'youtube') items.push({ label: 'Abrir en YouTube', fn: () => app.platform.openExternal('https://www.youtube.com/watch?v=' + one.ytId) });
     if (one && (one.bpm || one.camelot)) items.push({ label: '✨ Crear set desde esta pista (IA)…', fn: () => app.aiBuildSet(one) });
     items.push({ label: 'Editar…', fn: () => this.editTrack(one) });
-    if (this.viewId.startsWith('crate:')) items.push({ label: 'Quitar de la crate', fn: () => L.removeFromCrate(this.viewId.slice(6), ids) });
+    // en una crate padre que muestra las pistas de sus subcrates, se quitan también de ellos
+    if (this.viewId.startsWith('crate:')) {
+      const cid = this.viewId.slice(6), deep = L.subTracks && L.subcrateIds(cid).length > 0;
+      items.push({ label: deep ? 'Quitar de la crate y sus subcrates' : 'Quitar de la crate', fn: () => L.removeFromCrate(cid, ids, deep) });
+    }
     if (this.viewId === 'prepare') items.push({ label: 'Quitar de Prepare', fn: () => L.removeFromPrepare(ids) });
     items.push({ label: `Eliminar de la biblioteca (${ids.length})`, danger: true, fn: async () => { if (!L.guard('remove')) return; if (await app.confirm(`¿Quitar ${ids.length} pista(s) de la biblioteca? Los archivos no se borran del disco.`)) L.remove(ids); } });
     app.contextMenu(e, items);
@@ -601,13 +735,15 @@ export class LibraryUI {
 
   showCratesOf(t) {
     if (!t) return;
-    const list = this.lib.cratesOf(t.id);
+    // ruta completa de cada crate (Dance › 2024), en orden de árbol
+    const order = this.lib.sortedCrates(this.app.settings.crateSort);
+    const list = this.lib.cratesOf(t.id).sort((a, b) => order.indexOf(a) - order.indexOf(b));
     const body = el('div', { class: 'crates-of' },
       el('p', {}, `«${t.title || '—'}»${t.artist ? ' · ' + t.artist : ''}`),
       list.length
         ? el('ul', { class: 'crates-of-list' }, ...list.map(c => {
-          const li = el('li', { title: 'Abrir la crate' }, el('span', { class: 'swatch', style: { background: c.color || 'var(--line2)' } }), c.name, el('small', {}, this.crateInfo(c)));
-          li.addEventListener('click', () => { this.app.closeModal(); this.setView('crate:' + c.id); });
+          const li = el('li', { title: 'Abrir la crate' }, el('span', { class: 'swatch', style: { background: effectiveColor(this.lib.crates, c.id).color || 'var(--line2)' } }), this.crateLabel(c), el('small', {}, this.crateInfo(c)));
+          li.addEventListener('click', () => { this.app.closeModal(); this.expandCrate(c.id); this.setView('crate:' + c.id); });
           return li;
         }))
         : el('p', { class: 'hint' }, 'Esta pista no está en ninguna crate.'),

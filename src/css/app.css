@@ -264,6 +264,9 @@ body:not([data-wave-layout="deck"]) .deck-clock { width: auto; height: auto; fle
 .fx-head .sel { width: auto; max-width: 104px; }
 .fx-title { font-weight: 700; font-size: 11px; letter-spacing: .1em; color: var(--muted); margin-right: 2px; white-space: nowrap; }
 .fxunit.active .fx-title { color: var(--accent); }
+.fx-stemtag { font-size: 8.5px; font-weight: 800; letter-spacing: .05em; color: #000; background: var(--fx); border-radius: 3px; padding: 1px 4px; white-space: nowrap; }
+.fx-stemtag:empty { display: none; }
+.fx-sel optgroup { color: var(--muted); font-style: normal; }
 .fx-slots { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; min-width: 0; }
 .fxslot { display: flex; align-items: center; gap: 4px; min-width: 0; }
 .fx-sel { flex: 1; min-width: 0; background: var(--panel2); border: 1px solid var(--btn-line); border-radius: var(--radius); font-size: 10.5px; padding: 2px 3px; }
@@ -300,7 +303,7 @@ body:not([data-wave-layout="deck"]) .deck-clock { width: auto; height: auto; fle
 .lib-side-toggle { display: none; }
 .side-sec { display: flex; justify-content: space-between; align-items: center; padding: 10px 12px 4px; font-size: 9.5px; font-weight: 800; letter-spacing: .12em; color: var(--dim); }
 .sec-actions { display: flex; gap: 3px; }
-.side-actions { display: flex; gap: 4px; padding: 0 12px 4px; }
+.side-actions { display: flex; flex-wrap: wrap; gap: 4px; padding: 0 12px 4px; }
 .side-actions .btn { flex: 1; }
 .side-item { display: flex; align-items: center; gap: 8px; padding: 5px 12px; cursor: pointer; color: #c8d8f5; border-left: 2px solid transparent; }
 .side-item:hover { background: rgba(255, 255, 255, .05); }
@@ -310,6 +313,15 @@ body:not([data-wave-layout="deck"]) .deck-clock { width: auto; height: auto; fle
 .si-ico { width: 14px; text-align: center; color: var(--muted); }
 .si-label { flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .si-count { font-size: 10px; color: var(--dim); }
+/* subcrates: árbol con sangría por nivel (--depth), triángulo ▸/▾ y color heredado más tenue */
+.side-item.crate { gap: 4px; padding-left: calc(4px + var(--depth, 0) * 14px); }
+.side-item.crate .si-ico { margin-right: 4px; }
+.si-tw { width: 14px; flex: none; text-align: center; font-size: 12px; line-height: 16px; color: #9fb6dd; border-radius: 2px; }
+.si-tw:hover:not(:empty) { color: #fff; background: rgba(255, 255, 255, .1); }
+.side-item.inherit .si-ico { opacity: .45; }
+.side-item.drop-before { box-shadow: inset 0 2px 0 var(--accent); }
+.side-item.drop-after { box-shadow: inset 0 -2px 0 var(--accent); }
+.side-sec.drop { color: #fff; background: var(--accent-soft); }
 
 .lib-main { background: var(--lib); border: 1px solid var(--line); border-radius: var(--radius); display: flex; flex-direction: column; min-height: 0; position: relative; overflow: hidden; }
 .lib-main.drop { border-color: var(--accent); }
@@ -396,6 +408,47 @@ body:not([data-wave-layout="deck"]) .deck-clock { width: auto; height: auto; fle
 .ctx-item.has-sub::after { content: "›"; margin-left: auto; color: var(--muted); }
 .ctx-item.danger { color: var(--err); }
 .swatch { width: 14px; height: 14px; border-radius: 4px; display: inline-block; }
+/* Importar lista de Spotify (spotify-ui.js) */
+.sp-import { display: flex; flex-direction: column; gap: 8px; width: min(920px, 88vw); }
+.sp-in { display: flex; gap: 6px; }
+.sp-in input { flex: 1; min-width: 0; }
+.sp-status { font-size: 12px; color: var(--muted); min-height: 1.3em; user-select: text; }
+.sp-bar { height: 4px; border-radius: 2px; background: var(--panel2); overflow: hidden; visibility: hidden; }
+.sp-bar.on { visibility: visible; }
+.sp-bar > div { height: 100%; width: 0; background: var(--accent); transition: width .2s; }
+.sp-result { display: flex; flex-direction: column; gap: 8px; }
+.sp-head { display: flex; gap: 12px; align-items: center; }
+.sp-cover { width: 64px; height: 64px; flex: none; border-radius: 4px; object-fit: cover; background: var(--panel2); }
+.sp-meta { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.sp-meta b { font-size: 15px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sp-meta small { color: var(--muted); }
+.sp-counts { display: flex; flex-wrap: wrap; gap: 6px; }
+.sp-count, .sp-badge { padding: 2px 8px; border-radius: 10px; font-size: 11px; font-weight: 600; background: var(--panel2); border: 1px solid var(--line); white-space: nowrap; }
+.sp-count.ok, .sp-badge.ok { color: var(--ok); border-color: rgba(46, 224, 106, .4); }
+.sp-count.review, .sp-badge.review { color: var(--warn); border-color: rgba(255, 163, 26, .45); }
+.sp-count.yt, .sp-badge.yt { color: #ff7a82; border-color: rgba(255, 59, 71, .45); }
+.sp-count.missing, .sp-badge.missing { color: var(--muted); }
+.sp-tools { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; font-size: 12px; color: var(--muted); }
+.sp-rows { display: flex; flex-direction: column; border: 1px solid var(--line); border-radius: var(--radius); max-height: 46vh; overflow: auto; }
+.sp-row { display: grid; grid-template-columns: minmax(0, 1.3fr) 104px minmax(0, 1.2fr) auto; gap: 8px; align-items: center; padding: 5px 8px; border-bottom: 1px solid rgba(255, 255, 255, .04); }
+.sp-row.review { background: rgba(255, 163, 26, .06); }
+.sp-track { display: flex; gap: 8px; align-items: center; min-width: 0; }
+.sp-track > div { min-width: 0; }
+.sp-track b, .sp-track small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sp-track small, .sp-yt { color: var(--muted); font-size: 11px; }
+.sp-n { width: 26px; flex: none; text-align: right; color: var(--dim); font: 11px var(--mono); }
+.sp-badge { justify-self: start; }
+.sp-detail { min-width: 0; }
+.sp-detail .sel { width: 100%; }
+.sp-yt { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sp-acts { display: flex; gap: 4px; justify-content: flex-end; }
+.sp-paste { display: flex; gap: 4px; }
+.sp-foot { display: flex; flex-direction: column; gap: 4px; }
+.sp-foot .row { justify-content: flex-end; }
+.sp-mine { min-width: 0; max-height: 50vh; }
+.sp-steps { margin: 0 0 8px; padding-left: 20px; color: var(--muted); font-size: 12px; display: flex; flex-direction: column; gap: 4px; }
+.sp-redirect { list-style: none; display: flex; gap: 8px; align-items: center; }
+.sp-redirect code { font: 12px var(--mono); color: var(--text); background: var(--wave-bg); border: 1px solid var(--line); border-radius: var(--radius); padding: 3px 8px; user-select: all; }
 
 /* 12. Ajustes -------------------------------------------------------------- */
 .settings { display: grid; grid-template-columns: 170px 1fr; gap: 16px; width: min(880px, 86vw); min-height: 460px; }
@@ -535,6 +588,13 @@ body.laptop-mode #app.side-expanded .lib-side { display: block; }
   .lib-toolbar { flex-wrap: wrap; }
   .logo { font-size: 10px; }
   .wave-layout-toggle { display: none; }
+  .modal { min-width: 0; }
+  .sp-import { width: calc(94vw - 46px); } /* relleno del diálogo + su barra de scroll */
+  .sp-in { flex-wrap: wrap; }
+  .sp-in input { flex-basis: 100%; }
+  .sp-row { grid-template-columns: minmax(0, 1fr) auto; }
+  .sp-detail { grid-column: 1 / -1; }
+  .sp-acts { grid-column: 1 / -1; justify-content: flex-start; }
 }
 /* Alto ≤ 900 (p. ej. 1920×1080 al 125 %): efectos plegados tras ☰, formas de onda y mezclador más bajos
    para que la biblioteca conserve ~8 filas sin scroll */
@@ -648,6 +708,12 @@ body.laptop-mode #app.side-expanded .lib-side { display: block; }
 .deck .btn.stem.on { background: color-mix(in srgb, var(--stem) 30%, var(--panel3)); border-color: var(--stem); color: #fff; }
 .row.stems-row.loaded .btn.stem:not(.on) { text-decoration: line-through; opacity: .6; }
 .deck .btn.stem-sep { margin-left: auto; }
+.deck .btn.stem.fx { box-shadow: inset 0 -3px 0 var(--fx); }
+.deck .btn.stem-fxu { color: var(--fx); border-color: color-mix(in srgb, var(--fx) 45%, transparent); }
+.deck .btn.stem-fxu.on { background: color-mix(in srgb, var(--fx) 35%, var(--panel3)); color: #fff; }
+.deck .btn.stem-fxu.hidden, .pad-hint.hidden { display: none; }
+.pad.stemfx { border-color: var(--fx); box-shadow: inset 0 0 0 1px var(--fx), 0 0 8px color-mix(in srgb, var(--fx) 50%, transparent); }
+.pad-hint { font-size: 9.5px; color: var(--muted); line-height: 1.25; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .c-title .stm { margin-left: 6px; font-size: 8.5px; font-weight: 800; letter-spacing: .05em; color: #a35bff; border: 1px solid #a35bff88; border-radius: 3px; padding: 0 3px; }
 
 /* ---- Editor de beatgrid */
@@ -656,6 +722,7 @@ body.laptop-mode #app.side-expanded .lib-side { display: block; }
 .row.grid-edit .lbl { font-size: 9.5px; letter-spacing: .08em; opacity: .7; }
 .row.grid-edit .grid-count { opacity: .9; color: #ff9a1f; min-width: 64px; }
 .grid-bpm { cursor: text; min-width: 52px; text-align: center; color: #ff9a1f; }
+.row.grid-here .btn { padding: 3px 6px; min-width: 0; }
 
 /* ---- Importar biblioteca */
 .imp p { margin: 0 0 10px; }

@@ -291,8 +291,8 @@ export function detectTempo(full, low, fps, minBpm = 85, maxBpm = 175, offFull =
 
 // BPM variable: seguimiento de beats por programación dinámica (cada beat se apoya en el anterior
 // con una penalización por desviarse del periodo medio) y, si el tempo cambia de forma sostenida
-// (directos, temas tocados sin claqueta), marcas de beatgrid [{t, bpm}] cada 16 compases.
-// Si la rejilla fija ya encaja (error mediano < 15 ms o tempo estable), devuelve null.
+// (saltos de tempo, directos, temas tocados sin claqueta), marcas de beatgrid [{t, bpm}] donde empieza
+// cada tramo (`tempoSegments`). Si una rejilla fija encaja con los golpes, devuelve null.
 export function trackDrift(env, fps, per, ph, off = 0) {
   const n = env.length;
   if (n < per * 80) return null;
@@ -323,47 +323,84 @@ export function trackDrift(env, fps, per, ph, off = 0) {
     const a = env[bi - 1], c = env[bi], d = env[bi + 1], den = a - 2 * c + d;
     return bi + (den !== 0 ? Math.max(-0.5, Math.min(0.5, 0.5 * (a - d) / den)) : 0);
   });
-  // ajuste lineal local (±8 beats) para quitar el temblor de cada golpe
-  const fitAt = (i) => {
-    const a = Math.max(0, i - 8), z = Math.min(b.length - 1, i + 8);
-    let mk = 0, mt = 0, c = 0;
-    for (let k = a; k <= z; k++) { mk += k; mt += b[k]; c++; }
-    mk /= c; mt /= c;
-    let sxy = 0, sxx = 0;
-    for (let k = a; k <= z; k++) { sxy += (k - mk) * (b[k] - mt); sxx += (k - mk) ** 2; }
-    const sl = sxx ? sxy / sxx : per;
-    return { t: mt + sl * (i - mk), per: sl };
+  // solo cuentan los beats con golpe real (en los breaks sin bombo el seguidor avanza a pasos enteros
+  // de trama y derivaría): peso 1 si hay ataque cerca, 0 si no
+  const w = fr.map(t => { let m = 0; for (let i = Math.max(0, t - 2); i <= Math.min(n - 1, t + 2); i++) m = Math.max(m, env[i]); return m > 0.15 ? 1 : 0; });
+  const segs = tempoSegments(b.map(x => x / fps), w);
+  if (!segs || segs.length < 2) return null;
+  return segs.map(s => ({ t: Math.round((s.t + off) * 10000) / 10000, bpm: Math.round(s.bpm * 1000) / 1000 }));
+}
+
+// Tramos de tempo a partir de los tiempos de los golpes (s) y su peso (0/1): regresión lineal por tramos
+// (beat → tiempo) con división binaria donde el error lo pide y fusión de tramos vecinos cuyo BPM difiere
+// < 0,5 si juntos siguen encajando. Devuelve [{i, t, bpm}] (i = índice de beat) o null si basta una rejilla fija.
+export const SEG_TOL = 0.010;      // error (percentil 90) admitido por tramo, s
+export const SEG_MIN_BEATS = 16;   // tramo mínimo: 4 compases
+export const SEG_MIN_DBPM = 0.5;   // diferencia mínima de BPM entre tramos vecinos para mantenerlos separados
+export function tempoSegments(times, weights) {
+  const n = times.length;
+  if (n < 2 * SEG_MIN_BEATS) return null;
+  const wt = weights || times.map(() => 1);
+  // sumas prefijas ponderadas para la regresión de cualquier rango [a, z)
+  const P = ['w', 'k', 't', 'kk', 'kt', 'tt'].map(() => new Float64Array(n + 1));
+  for (let i = 0; i < n; i++) {
+    const w = wt[i], t = times[i];
+    const v = [w, w * i, w * t, w * i * i, w * i * t, w * t * t];
+    for (let j = 0; j < 6; j++) P[j][i + 1] = P[j][i] + v[j];
+  }
+  const fit = (a, z) => {
+    const S = P.map(p => p[z] - p[a]);
+    const [sw, sk, st, skk, skt, stt] = S;
+    if (sw < 8) return null;
+    const vk = skk - sk * sk / sw, ck = skt - sk * st / sw;
+    if (vk <= 0) return null;
+    const slope = ck / vk, icpt = (st - slope * sk) / sw;
+    return { slope, icpt, sse: Math.max(0, stt - st * st / sw - slope * ck), sw };
   };
-  // ¿hace falta? error de la rejilla fija frente a los beats seguidos y variación del tempo local
-  const k0 = Math.round((b[0] - ph) / per);
-  const errs = b.map((x, i) => { let e = (x - (ph + (k0 + i) * per)) / per; e -= Math.round(e); return Math.abs(e * per) / fps; }).sort((x, y) => x - y);
-  const medErr = errs[errs.length >> 1];
-  const pers = [];
-  for (let i = 16; i < b.length - 16; i += 16) pers.push(fitAt(i).per);
-  const vari = pers.length ? (Math.max(...pers) - Math.min(...pers)) / per : 0;
-  if (medErr < 0.015 || vari < 0.012) return null;
-  // marcas cada 4 compases y después se quitan las que no hacen falta (error < 5 ms sin ellas)
-  const fitT = (i) => fitAt(i).t / fps + off;
-  let marks = [];
-  for (let i = 0; i < b.length; i += 16) marks.push({ i, t: fitT(i) });
-  const lastI = b.length - 1 - ((b.length - 1) % 4);
-  if (lastI - marks[marks.length - 1].i >= 8) marks.push({ i: lastI, t: fitT(lastI) });
-  const fits = (a, z) => {
-    const p = (z.t - a.t) / (z.i - a.i);
-    for (let j = a.i + 1; j < z.i; j++) if (Math.abs(a.t + (j - a.i) * p - fitT(j)) > 0.005) return false;
-    return true;
+  const p90 = (a, z, f) => {
+    const r = [];
+    for (let i = a; i < z; i++) if (wt[i] > 0) r.push(Math.abs(times[i] - (f.icpt + f.slope * i)));
+    r.sort((x, y) => x - y);
+    return r.length ? r[Math.floor(r.length * 0.9)] : 0;
   };
-  const kept = [marks[0]];
-  for (let k = 1; k < marks.length - 1; k++) if (!fits(kept[kept.length - 1], marks[k + 1])) kept.push(marks[k]);
-  kept.push(marks[marks.length - 1]);
-  marks = kept;
-  if (marks.length < 2) return null;
-  const grid = marks.map((m, k) => {
-    const nx = marks[k + 1];
-    return { t: m.t, bpm: nx ? 60 * (nx.i - m.i) / (nx.t - m.t) : null };
-  });
-  grid[grid.length - 1].bpm = grid[grid.length - 2].bpm;
-  return grid.map(g => ({ t: Math.round(g.t * 10000) / 10000, bpm: Math.round(g.bpm * 1000) / 1000 }));
+  const ok = (a, z, tol = SEG_TOL) => { const f = fit(a, z); return f && f.slope > 0 && p90(a, z, f) <= tol; };
+  // división binaria: el punto que minimiza el error cuadrático de los dos tramos
+  const cuts = [];
+  const split = (a, z, depth) => {
+    if (depth > 12 || z - a < 2 * SEG_MIN_BEATS || ok(a, z)) return;
+    let best = -1, bs = Infinity;
+    for (let k = a + SEG_MIN_BEATS; k <= z - SEG_MIN_BEATS; k++) {
+      const f1 = fit(a, k), f2 = fit(k, z);
+      if (!f1 || !f2) continue;
+      if (f1.sse + f2.sse < bs) { bs = f1.sse + f2.sse; best = k; }
+    }
+    if (best < 0) return;
+    cuts.push(best);
+    split(a, best, depth + 1); split(best, z, depth + 1);
+  };
+  if (ok(0, n)) return null;
+  split(0, n, 0);
+  let bounds = [0, ...cuts.sort((x, y) => x - y), n];
+  const bpmOf = (a, z) => { const f = fit(a, z); return f && f.slope > 0 ? 60 / f.slope : 0; };
+  // fusión: vecinos con < 0,5 BPM de diferencia que juntos encajan (2× tolerancia) → un tramo
+  for (let changed = true; changed && bounds.length > 2;) {
+    changed = false;
+    let bi = -1, bd = Infinity;
+    for (let j = 1; j < bounds.length - 1; j++) {
+      const d = Math.abs(bpmOf(bounds[j - 1], bounds[j]) - bpmOf(bounds[j], bounds[j + 1]));
+      if (d < SEG_MIN_DBPM && d < bd && ok(bounds[j - 1], bounds[j + 1], 2 * SEG_TOL)) { bd = d; bi = j; }
+    }
+    if (bi > 0) { bounds.splice(bi, 1); changed = true; }
+  }
+  if (bounds.length <= 2) return null;
+  const out = [];
+  for (let j = 0; j + 1 < bounds.length; j++) {
+    const a = bounds[j], f = fit(a, bounds[j + 1]);
+    let bpm = 60 / f.slope;
+    if (Math.abs(bpm - Math.round(bpm)) < 0.03) bpm = Math.round(bpm);
+    out.push({ i: a, t: f.icpt + f.slope * a, bpm });
+  }
+  return out;
 }
 
 

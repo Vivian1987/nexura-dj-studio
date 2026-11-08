@@ -84,8 +84,9 @@ export class Automix extends Emitter {
   // Momento de empezar la transición en la pista que suena
   mixOutTime(d) {
     const t = d.track;
-    const len = this.bars * 4 * (d.beatLen || 0.5);
     const outro = (t.sections || []).find(s => s.type === 'outro');
+    // duración de la transición según el grid (con BPM variable, la del tramo donde se mezcla)
+    const len = d.beatsSec(this.bars * 4, outro ? outro.t : Math.max(0, d.duration - 30));
     let at = outro ? outro.t : d.duration - len - 4;
     if (at + len > d.duration - 1) at = d.duration - len - 1; // que la transición quepa
     return Math.max(d.duration * 0.4, at);
@@ -135,7 +136,7 @@ export class Automix extends Emitter {
 
   beginMix(from, to) {
     const E = this.app.engine;
-    const len = this.bars * 4 * (from.beatLen || 0.5) / (from.tempo || 1);
+    const len = from.beatsSec(this.bars * 4) / (from.tempo || 1);
     const saved = { fromLow: E.channels[from.idx].values.low, toLow: E.channels[to.idx].values.low };
     to.seek(this.mixIn(to.track));
     if (to.bpm && from.bpm) to.setSync(true);

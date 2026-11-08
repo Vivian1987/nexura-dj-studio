@@ -134,7 +134,7 @@ export class MC4000Profile {
         switch (d1) {
           case 0x02: if (on) app.loadSelected(0); return true;
           case 0x03: if (on) app.loadSelected(1); return true;
-          case 0x07: if (on) app.libraryUI.toggleFocus('side'); return true;
+          case 0x07: if (on && !app.libraryUI.sideKey(-1)) app.libraryUI.toggleFocus('side'); return true;   // en la barra lateral pliega subcrates
           case 0x11: if (on) app.togglePanel('sampler'); return true;
           case 0x1F: if (on) app.libraryUI.toggleFocus(); return true;
           case 0x1B: if (on) { const tr = app.libraryUI.current(); if (tr) { app.library.addToPrepare([tr.id]); app.toast('Añadida a Prepare: ' + tr.title); } } return true;

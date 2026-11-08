@@ -122,8 +122,8 @@ async function readTags(filePath) {
       const idLen = ver === 2 ? 3 : 4;
       const hdrLen = ver === 2 ? 6 : 10;
       const map = ver === 2
-        ? { TT2: 'title', TP1: 'artist', TAL: 'album', TCO: 'genre', TBP: 'bpm', TKE: 'key', TYE: 'year' }
-        : { TIT2: 'title', TPE1: 'artist', TALB: 'album', TCON: 'genre', TBPM: 'bpm', TKEY: 'key', TYER: 'year', TDRC: 'year' };
+        ? { TT2: 'title', TP1: 'artist', TAL: 'album', TCO: 'genre', TBP: 'bpm', TKE: 'key', TYE: 'year', TRC: 'isrc' }
+        : { TIT2: 'title', TPE1: 'artist', TALB: 'album', TCON: 'genre', TBPM: 'bpm', TKEY: 'key', TYER: 'year', TDRC: 'year', TSRC: 'isrc' };
       while (p + hdrLen < tag.length) {
         const id = tag.toString('latin1', p, p + idLen);
         if (!/^[A-Z0-9]+$/.test(id)) break;
@@ -154,7 +154,7 @@ async function readTags(filePath) {
             const kv = b.toString('utf8', q, q + l); q += l;
             const eq = kv.indexOf('=');
             const k = kv.slice(0, eq).toUpperCase(), v = kv.slice(eq + 1);
-            const m = { TITLE: 'title', ARTIST: 'artist', ALBUM: 'album', GENRE: 'genre', BPM: 'bpm', INITIALKEY: 'key', DATE: 'year' };
+            const m = { TITLE: 'title', ARTIST: 'artist', ALBUM: 'album', GENRE: 'genre', BPM: 'bpm', INITIALKEY: 'key', DATE: 'year', ISRC: 'isrc' };
             if (m[k]) tags[m[k]] = clean(v);
           }
           break;
@@ -348,6 +348,143 @@ async function ytAccessToken() {
   ytTokens.expiry = Date.now() + (j.expires_in - 60) * 1000;
   await saveSecrets();
   return ytTokens.access_token;
+}
+
+// ---------------------------------------------------------------------------
+// Spotify: solo metadatos de listas, álbumes y pistas (título, artistas, duración, ISRC, carátula).
+// Nunca se descarga ni se extrae audio. OAuth con PKCE (sin client secret) y redirect fijo en
+// 127.0.0.1 (Spotify exige registrar el URI exacto; mismo valor que SPOTIFY_REDIRECT_URI en spotify-core.js).
+// ---------------------------------------------------------------------------
+const SPOTIFY_PORT = 43827;
+const SPOTIFY_REDIRECT = `http://127.0.0.1:${SPOTIFY_PORT}/callback`;
+const SPOTIFY_SCOPES = 'playlist-read-private playlist-read-collaborative';
+const spotifyFile = () => path.join(dataDir(), 'spotify.bin');
+let spTokens = null; // { access_token, refresh_token, expiry, clientId, user }
+
+async function loadSpotify() {
+  try {
+    const raw = await fsp.readFile(spotifyFile());
+    spTokens = JSON.parse(safeStorage.isEncryptionAvailable() ? safeStorage.decryptString(raw) : raw.toString('utf8'));
+  } catch (_) { spTokens = null; }
+}
+async function saveSpotify() {
+  const json = JSON.stringify(spTokens || {});
+  await fsp.writeFile(spotifyFile(), safeStorage.isEncryptionAvailable() ? safeStorage.encryptString(json) : Buffer.from(json, 'utf8'));
+}
+async function spotifyToken(body) {
+  const r = await fetch('https://accounts.spotify.com/api/token', { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams(body) });
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(j.error_description || j.error || 'Error de token de Spotify (HTTP ' + r.status + ')');
+  return j;
+}
+
+let spLogin = null;
+function spotifyLogin(clientId) {
+  if (!/^[A-Za-z0-9]{16,64}$/.test(String(clientId || ''))) return Promise.reject(new Error('Client ID de Spotify no válido'));
+  if (spLogin) { try { spLogin.close(); } catch (_) {} spLogin = null; }
+  return new Promise((resolve, reject) => {
+    const verifier = b64url(crypto.randomBytes(48));
+    const challenge = b64url(crypto.createHash('sha256').update(verifier).digest());
+    const state = b64url(crypto.randomBytes(12));
+    let done = false;
+    const finish = (err, val) => {
+      if (done) return; done = true;
+      clearTimeout(timer);
+      try { srv.close(); } catch (_) {}
+      spLogin = null;
+      err ? reject(err) : resolve(val);
+    };
+    const srv = http.createServer(async (req, res) => {
+      const u = new URL(req.url, SPOTIFY_REDIRECT);
+      if (u.pathname !== '/callback') { res.writeHead(404); return res.end(); }
+      const ok = u.searchParams.has('code') && u.searchParams.get('state') === state;
+      res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+      res.end('<html><body style="font-family:sans-serif;background:#0b0d14;color:#fff;text-align:center;padding-top:80px">' +
+        `<h2>Nexura DJ Studio</h2><p>${ok ? 'Cuenta de Spotify conectada. Ya puedes volver a la aplicación.' : 'No se pudo conectar la cuenta. Vuelve a la aplicación e inténtalo de nuevo.'}</p></body></html>`);
+      if (u.searchParams.get('state') !== state) return finish(new Error('Estado OAuth no válido'));
+      if (u.searchParams.has('error')) return finish(new Error(u.searchParams.get('error') === 'access_denied' ? 'Acceso denegado en Spotify' : u.searchParams.get('error')));
+      try {
+        const j = await spotifyToken({ grant_type: 'authorization_code', code: u.searchParams.get('code'), redirect_uri: SPOTIFY_REDIRECT, client_id: clientId, code_verifier: verifier });
+        spTokens = { access_token: j.access_token, refresh_token: j.refresh_token, expiry: Date.now() + ((j.expires_in || 3600) - 60) * 1000, clientId, user: '' };
+        try {
+          const me = await fetch('https://api.spotify.com/v1/me', { headers: { Authorization: 'Bearer ' + j.access_token } }).then(r => (r.ok ? r.json() : null));
+          if (me) spTokens.user = me.display_name || me.id || '';
+        } catch (_) { /* el nombre es opcional */ }
+        await saveSpotify();
+        finish(null, { ok: true, user: spTokens.user });
+      } catch (e) { finish(e); }
+    });
+    spLogin = srv;
+    srv.on('error', (e) => finish(new Error(e.code === 'EADDRINUSE' ? `El puerto ${SPOTIFY_PORT} está ocupado por otro programa: ciérralo y vuelve a intentarlo.` : e.message)));
+    srv.listen(SPOTIFY_PORT, '127.0.0.1', () => {
+      shell.openExternal('https://accounts.spotify.com/authorize?' + new URLSearchParams({
+        client_id: clientId, response_type: 'code', redirect_uri: SPOTIFY_REDIRECT, scope: SPOTIFY_SCOPES,
+        code_challenge_method: 'S256', code_challenge: challenge, state
+      }));
+    });
+    const timer = setTimeout(() => finish(new Error('Tiempo de espera agotado al conectar con Spotify')), 5 * 60 * 1000);
+  });
+}
+
+async function spotifyAccess(force = false) {
+  if (!spTokens || !spTokens.refresh_token) return null;
+  if (!force && spTokens.access_token && Date.now() < spTokens.expiry) return spTokens.access_token;
+  const j = await spotifyToken({ grant_type: 'refresh_token', refresh_token: spTokens.refresh_token, client_id: spTokens.clientId });
+  spTokens.access_token = j.access_token;
+  if (j.refresh_token) spTokens.refresh_token = j.refresh_token; // Spotify puede rotarlo
+  spTokens.expiry = Date.now() + ((j.expires_in || 3600) - 60) * 1000;
+  await saveSpotify();
+  return spTokens.access_token;
+}
+
+// GET a la Web API (solo https://api.spotify.com/v1/…): { ok, status, data }. Renueva el token si caduca
+// y espera (como mucho 10 s) si Spotify pide reintentar más tarde (429).
+async function spotifyApi(url) {
+  const full = /^https:\/\//.test(url) ? url : 'https://api.spotify.com' + url;
+  const u = new URL(full);
+  if (u.origin !== 'https://api.spotify.com' || !u.pathname.startsWith('/v1/')) throw new Error('Dirección de la API de Spotify no válida');
+  let token = await spotifyAccess();
+  if (!token) throw new Error('Conecta tu cuenta de Spotify en Ajustes → Spotify');
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const r = await fetch(u, { headers: { Authorization: 'Bearer ' + token } });
+    if (r.status === 401 && attempt === 0) { token = await spotifyAccess(true); continue; }
+    if (r.status === 429 && attempt < 2) {
+      const wait = Math.min(10, Number(r.headers.get('retry-after')) || 2);
+      await new Promise(res => setTimeout(res, wait * 1000));
+      continue;
+    }
+    const data = await r.json().catch(() => null);
+    return { ok: r.ok, status: r.status, data };
+  }
+  return { ok: false, status: 429, data: null };
+}
+
+// Página pública de inserción (open.spotify.com/embed/…): solo el HTML con el JSON de metadatos
+async function spotifyEmbed(type, id) {
+  if (!['playlist', 'album', 'track'].includes(type) || !/^[A-Za-z0-9]{22}$/.test(String(id || ''))) throw new Error('Enlace de Spotify no válido');
+  const r = await fetch(`https://open.spotify.com/embed/${type}/${id}`, {
+    headers: {
+      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0 Safari/537.36',
+      'Accept-Language': 'es-ES,es;q=0.9,en;q=0.8', Accept: 'text/html'
+    }
+  });
+  if (r.status === 404) throw new Error('La lista no existe o no es pública.');
+  if (!r.ok) throw new Error('Spotify respondió HTTP ' + r.status);
+  const text = await r.text();
+  return text.slice(0, 8 * 1024 * 1024);
+}
+
+// Enlaces que la interfaz puede abrir en el navegador del sistema (platform.openExternal)
+const EXTERNAL_HOSTS = [
+  'youtube.com', 'youtu.be', 'nexuraia.com',
+  'spotify.com', // open.spotify.com y developer.spotify.com (instrucciones de Ajustes → Spotify)
+  'beatport.com', 'bandcamp.com', 'music.apple.com', 'itunes.apple.com' // «Comprar»
+];
+function externalAllowed(url) {
+  try {
+    const u = new URL(url);
+    return u.protocol === 'https:' && EXTERNAL_HOSTS.some(h => u.hostname === h || u.hostname.endsWith('.' + h));
+  } catch (_) { return false; }
 }
 
 // ---------------------------------------------------------------------------
@@ -678,9 +815,16 @@ function registerIpc() {
     return true;
   });
   ipcMain.handle('shell:openExternal', (_e, url) => {
-    if (/^https:\/\//.test(url) || /^mailto:contacto@nexuraia\.com\?/.test(url)) shell.openExternal(url);
-    return true;
+    if (externalAllowed(url) || /^mailto:contacto@nexuraia\.com\?/.test(url)) { shell.openExternal(url); return true; }
+    return false;
   });
+
+  // Spotify (solo metadatos)
+  ipcMain.handle('spotify:embed', async (_e, type, id) => spotifyEmbed(type, id));
+  ipcMain.handle('spotify:api', async (_e, url) => spotifyApi(String(url || '')));
+  ipcMain.handle('spotify:login', async (_e, clientId) => spotifyLogin(String(clientId || '').trim()));
+  ipcMain.handle('spotify:logout', async () => { spTokens = null; await saveSpotify(); return true; });
+  ipcMain.handle('spotify:status', async () => ({ connected: !!(spTokens && spTokens.refresh_token), user: (spTokens && spTokens.user) || '', redirectUri: SPOTIFY_REDIRECT }));
 
   // YouTube
   ipcMain.handle('yt:oembed', async (_e, videoId) => {
@@ -752,6 +896,7 @@ app.on('second-instance', () => {
 app.whenReady().then(async () => {
   await ensureDirs();
   await loadSecrets();
+  await loadSpotify();
   setupPermissions();
   registerIpc();
   serverPort = await startStaticServer();

@@ -1,6 +1,7 @@
 // Formas de onda: vista de detalle con desplazamiento (beatgrid, cues, loops)
 // y vista general de la pista completa.
 import { clamp, DECK_COLORS, DECK_LIGHT } from '../util.js';
+import { tempoChanges } from '../audio/grid.js';
 
 const SEC_COLORS = { intro: '#1ee0ff', drop: '#ff3b47', break: '#a35bff', outro: '#ffa31a' };
 const C_LOW = [235, 45, 40], C_MID = [60, 205, 70], C_HIGH = [45, 110, 255];
@@ -141,18 +142,26 @@ export class WaveDetail {
       }
     }
 
-    // marcas del beatgrid (BPM variable): línea naranja con rombo abajo
+    // marcas del beatgrid (BPM variable): línea naranja con rombo abajo y, donde cambia el tempo,
+    // una etiqueta con el BPM nuevo (y la flecha de subida/bajada)
     if (d.hasGridMarkers) {
-      for (const m of d.track.grid) {
+      const g = d.track.grid;
+      g.forEach((m, i) => {
         const x = Math.round(xOf(m.t)) + 0.5;
-        if (x < -10 || x > w + 10) continue;
+        if (x < -90 || x > w + 10) return;
         ctx.strokeStyle = '#ff9a1f'; ctx.lineWidth = 1.5;
         ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, h); ctx.stroke(); ctx.lineWidth = 1;
         ctx.fillStyle = '#ff9a1f';
         ctx.beginPath(); ctx.moveTo(x, h - 12); ctx.lineTo(x + 5, h - 6); ctx.lineTo(x, h); ctx.lineTo(x - 5, h - 6); ctx.fill();
-        ctx.font = '700 9px Inter, sans-serif'; ctx.textAlign = 'left';
-        ctx.fillText(m.bpm.toFixed(2), x + 7, h - 3);
-      }
+        const prev = g[i - 1], changed = !prev || Math.abs(m.bpm - prev.bpm) > 0.005;
+        if (!changed) return;
+        const label = (prev ? (m.bpm > prev.bpm ? '▲ ' : '▼ ') : '') + m.bpm.toFixed(2) + ' BPM';
+        ctx.font = '700 10px Inter, sans-serif'; ctx.textAlign = 'left';
+        const tw = ctx.measureText(label).width + 10, y = Math.min(h - 30, 15);
+        ctx.fillStyle = 'rgba(5,9,17,0.85)'; ctx.fillRect(x + 3, y, tw, 14);
+        ctx.strokeStyle = '#ff9a1f'; ctx.strokeRect(x + 3.5, y + 0.5, tw - 1, 13);
+        ctx.fillStyle = '#ffb35a'; ctx.fillText(label, x + 8, y + 11);
+      });
     }
 
     // secciones detectadas por la IA (etiqueta arriba)
@@ -279,6 +288,11 @@ export class WaveOverview {
     }
     d.track.cues.forEach((c) => { if (c) { ctx.fillStyle = c.color; ctx.fillRect((c.t / d.duration) * w, 0, 2, h); } });
     (d.track.cueLoops || []).forEach((c) => { if (c) { ctx.fillStyle = c.color; ctx.fillRect((c.t / d.duration) * w, h - 5, Math.max(3, ((c.le - c.t) / d.duration) * w), 5); } });
+    // cambios de tempo del beatgrid: marca naranja abajo
+    if (d.hasGridMarkers) {
+      ctx.fillStyle = '#ff9a1f';
+      for (const m of tempoChanges(d.track)) { const x = (m.t / d.duration) * w; ctx.beginPath(); ctx.moveTo(x - 4, h); ctx.lineTo(x + 4, h); ctx.lineTo(x, h - 6); ctx.fill(); }
+    }
     // secciones de la IA: triángulos de color en la parte superior
     for (const sct of d.track.sections || []) {
       const x = (sct.t / d.duration) * w;

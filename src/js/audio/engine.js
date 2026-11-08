@@ -24,6 +24,10 @@ class ChannelStrip {
   constructor(ctx, engine, idx) {
     this.ctx = ctx; this.engine = engine; this.idx = idx;
     this.input = ctx.createGain();            // entrada del deck
+    // Stems FX: los stems enviados salen por la 2.ª salida del deck → [unidad FX] → entrada del canal
+    this.stemIn = ctx.createGain();
+    this.stemIn.connect(this.input);
+    this.stemInserts = [];
     this.trim = ctx.createGain();
     this.low = ctx.createBiquadFilter(); this.low.type = 'lowshelf'; this.low.frequency.value = 200;
     this.mid = ctx.createBiquadFilter(); this.mid.type = 'peaking'; this.mid.frequency.value = 1000; this.mid.Q.value = 0.7;
@@ -94,6 +98,15 @@ class ChannelStrip {
     let node = this.preFx;
     for (const u of units) { node.connect(u.input); node = u.output; }
     node.connect(this.postFx);
+  }
+  // Unidades FX solo para los stems enviados (Stems FX): stemIn → [unidades] → input
+  setStemInserts(units) {
+    try { this.stemIn.disconnect(); } catch (_) {}
+    for (const u of this.stemInserts) { try { u.output.disconnect(); } catch (_) {} }
+    this.stemInserts = units;
+    let node = this.stemIn;
+    for (const u of units) { node.connect(u.input); node = u.output; }
+    node.connect(this.input);
   }
   meter() { return meterPeak(this.analyser, this.meterBuf); }
 }

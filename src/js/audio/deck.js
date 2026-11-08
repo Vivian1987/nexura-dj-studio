@@ -27,8 +27,10 @@ export class Deck extends Emitter {
     this.idx = idx;
     this.engine = app.engine;
     const ctx = this.engine.ctx;
-    this.node = new AudioWorkletNode(ctx, 'nexura-deck', { numberOfInputs: 0, numberOfOutputs: 1, outputChannelCount: [2] });
-    this.node.connect(this.engine.channels[idx].input);
+    // salida 0 = deck; salida 1 = stems enviados a FX (Stems FX)
+    this.node = new AudioWorkletNode(ctx, 'nexura-deck', { numberOfInputs: 0, numberOfOutputs: 2, outputChannelCount: [2, 2] });
+    this.node.connect(this.engine.channels[idx].input, 0);
+    this.node.connect(this.engine.channels[idx].stemIn, 1);
     this.node.port.onmessage = (e) => this.onWorklet(e.data);
 
     this.track = null;
@@ -62,6 +64,9 @@ export class Deck extends Emitter {
     this.taps = [];
     this.stemsOn = false;              // stems cargados en el worklet
     this.stemGains = [1, 1, 1, 1];     // voz, batería, bajo, melodía
+    this.stemFx = [false, false, false, false]; // Stems FX: stems enviados a la unidad stemFxUnit
+    this.stemFxUnit = idx % 2;
+    this.stemSlipHeld = [null, null, null, null];
     this.send({ t: 'keylock', v: this.keylock });
     this.applyMotor();
     this.applySlipRelease();
@@ -101,6 +106,9 @@ export class Deck extends Emitter {
   get hasGridMarkers() { return !!(this.track && this.track.grid && this.track.grid.length > 1); }
   beatAt(t) { return this.track && this.track.bpm ? Grid.beatAt(this.track, t) : 0; }
   beatTime(b) { return this.track && this.track.bpm ? Grid.beatTime(this.track, b) : 0; }
+  // segundos que ocupan `beats` beats desde `from` siguiendo el grid (BPM variable); beats entre dos tiempos
+  beatsSec(beats, from = this.time) { return this.track && this.track.bpm ? Grid.beatSpan(this.track, from, beats) : beats * 0.5; }
+  beatsBetween(a, b) { return this.track && this.track.bpm ? this.beatAt(b) - this.beatAt(a) : (b - a) / 0.5; }
   nearestBeat(t) { return this.bpm ? this.beatTime(Math.round(this.beatAt(t))) : t; }
   floorBeat(t, div = 1) { return this.bpm ? this.beatTime(Math.floor(this.beatAt(t) / div + 1e-6) * div) : t; }
   q(t) { return this.app.settings.quantize && this.bpm ? this.nearestBeat(t) : t; }
@@ -114,7 +122,7 @@ export class Deck extends Emitter {
   async load(track, buffer) {
     this.stopAll();
     this.unloadYT();
-    this.stemsOn = false; this.stemGains = [1, 1, 1, 1];
+    this.stemsOn = false; this.stemGains = [1, 1, 1, 1]; this.resetStemFx();
     this.track = track;
     this.isYT = false;
     this.sr = buffer.sampleRate;
@@ -171,7 +179,7 @@ export class Deck extends Emitter {
     this.stemsOn = true; this.stemLag = lag;
     this.emit('stems'); this.emit('pads');
   }
-  clearStems() { this.send({ t: 'stems', stems: null }); this.stemsOn = false; this.stemGains = [1, 1, 1, 1]; this.emit('stems'); this.emit('pads'); }
+  clearStems() { this.send({ t: 'stems', stems: null }); this.stemsOn = false; this.stemGains = [1, 1, 1, 1]; this.resetStemFx(); this.emit('stems'); this.emit('pads'); }
   needStems() {
     if (this.stemsOn) return true;
     if (!this.track || this.isYT) { this.app.toast('Los stems no están disponibles para vídeos de YouTube', 'warn'); return false; }
@@ -196,12 +204,66 @@ export class Deck extends Emitter {
     const same = p.gains.every((v, i) => Math.abs(v - this.stemGains[i]) < 0.01);
     this.setStemGains(same && name !== 'all' ? [1, 1, 1, 1] : p.gains.slice());
   }
+  // Stems FX: el stem k pasa por la unidad FX `stemFxUnit` (el resto del deck sigue limpio)
+  toggleStemFx(k) {
+    if (!this.needStems()) return;
+    const on = !this.stemFx[k];
+    if (on) {
+      // una unidad solo puede procesar los stems de un deck
+      for (const o of this.app.decks) {
+        if (o !== this && o.stemFxUnit === this.stemFxUnit && o.stemFx.some(Boolean)) { o.stemFx = [false, false, false, false]; o.emit('stems'); o.emit('pads'); }
+      }
+    }
+    this.stemFx[k] = on;
+    this.app.stemFxChanged(this, k, on);
+    this.emit('stems'); this.emit('pads');
+  }
+  setStemFxUnit(u) {
+    if (u === this.stemFxUnit || !this.app.fxUnits[u]) return;
+    const any = this.stemFx.some(Boolean);
+    this.stemFxUnit = u;
+    if (any) { const k = this.stemFx.indexOf(true); this.stemFx[k] = false; this.toggleStemFx(k); }
+    this.emit('stems'); this.emit('pads');
+  }
+  applyStemSend(v) {
+    const s = v.join(',');
+    if (s === this._stemSend) return;
+    this._stemSend = s;
+    this.send({ t: 'stemSend', v });
+  }
+  // Stem Slip: mientras se mantiene, el stem se silencia (o repite un beat en loop, según Ajustes);
+  // al soltar vuelve en su sitio porque los stems siguen avanzando con la pista
+  stemSlipDown(k) {
+    if (!this.needStems() || this.stemSlipHeld[k]) return;
+    const mode = this.app.settings.stemSlipMode === 'loop' && this.bpm ? 'loop' : 'mute';
+    this.stemSlipHeld[k] = { mode, prev: this.stemGains[k] };
+    if (mode === 'loop') {
+      const s = this.floorBeat(this.time), len = this.beatsSec(this.app.settings.stemSlipBeats || 1, s);
+      this.send({ t: 'stemHold', k, on: true, s: s * this.sr, len: len * this.sr });
+    } else {
+      const g = this.stemGains.slice(); g[k] = 0; this.setStemGains(g);
+    }
+    this.emit('pads');
+  }
+  stemSlipUp(k) {
+    const h = this.stemSlipHeld[k];
+    if (!h) return;
+    this.stemSlipHeld[k] = null;
+    if (h.mode === 'loop') this.send({ t: 'stemHold', k, on: false });
+    else { const g = this.stemGains.slice(); g[k] = h.prev; this.setStemGains(g); }
+    this.emit('pads');
+  }
+  resetStemFx() {
+    this.stemSlipHeld = [null, null, null, null];
+    if (this.stemFx && this.stemFx.some(Boolean)) { this.stemFx = [false, false, false, false]; if (this.app.fxUnits) this.app.rewireFx(); }
+    this.stemFx = [false, false, false, false];
+  }
 
   eject() {
     if (this.playing) return;
     this.stopAll();
     this.send({ t: 'unload' });
-    this.stemsOn = false; this.stemGains = [1, 1, 1, 1];
+    this.stemsOn = false; this.stemGains = [1, 1, 1, 1]; this.resetStemFx();
     if (this.yt) this.yt.destroy(), this.yt = null;
     this.track = null; this.isYT = false; this.duration = 0;
     this.emit('track', null); this.emit('state');
@@ -426,7 +488,7 @@ export class Deck extends Emitter {
     if (this.isCueLoopActive(c)) { this.loopOff(); return; }
     this.app.expansions?.record(this, { type: 'cue', time: c.t });
     if (this.bpm) {
-      const b = (c.le - c.t) / this.beatLen;
+      const b = this.beatsBetween(c.t, c.le);
       this.loopBeats = LOOP_SIZES.find(x => Math.abs(x - b) < 1e-3) ?? Math.round(b * 1000) / 1000;
     }
     this.setLoop(c.t, c.le, true);
@@ -434,9 +496,9 @@ export class Deck extends Emitter {
     if (!this.playing) this.play();
   }
   isCueLoopActive(c) { return !!(c && c.le && this.loop.on && Math.abs(this.loop.s - c.t) < 1e-3 && Math.abs(this.loop.e - c.le) < 1e-3); }
-  loopLabel(len) {
+  loopLabel(len, from = this.loop.s) {
     if (!this.bpm) return len.toFixed(2) + ' s';
-    const b = Math.round(len / this.beatLen * 1000) / 1000;
+    const b = Math.round(this.beatsBetween(from, from + len) * 1000) / 1000;
     return (LOOP_SIZES.includes(b) ? fmtBeats(b) : String(Math.round(b * 100) / 100)) + (b === 1 ? ' beat' : ' beats');
   }
   // Convierte un hot cue normal en Cue Loop con el loop activo, o un Cue Loop en cue normal
@@ -446,8 +508,7 @@ export class Deck extends Emitter {
     if (c.le) { delete c.le; }
     else if (this.loop.e > this.loop.s) { c.t = this.loop.s; c.le = this.loop.e; }
     else {
-      const len = (this.loopBeats || 4) * (this.beatLen || 0.5);
-      c.le = c.t + len;
+      c.le = c.t + this.beatsSec(this.loopBeats || 4, c.t);
     }
     this.saveCues();
   }
@@ -479,31 +540,30 @@ export class Deck extends Emitter {
   loopOff() { if (this.loop.on) this.setLoop(this.loop.s, this.loop.e, false); }
   autoLoop(beats = this.loopBeats) {
     if (!this.track) return;
-    if (this.loop.on && Math.abs((this.loop.e - this.loop.s) - beats * this.beatLen) < 1e-3) { this.loopOff(); return; }
+    if (this.loop.on && Math.abs(this.beatsBetween(this.loop.s, this.loop.e) - beats) < 1e-3) { this.loopOff(); return; }
     this.loopBeats = beats;
-    const bl = this.beatLen || 0.5;
     const now = this.time;
     const s = this.app.settings.quantize && this.bpm ? this.floorBeat(now, Math.min(1, beats)) : now;
-    this.setLoop(s, s + beats * bl, true);
+    this.setLoop(s, s + this.beatsSec(beats, s), true);
   }
   loopSize(d) { // d = ±1 → ½ / ×2
     const i = clamp(LOOP_SIZES.indexOf(this.loopBeats) + d, 0, LOOP_SIZES.length - 1);
     this.loopBeats = LOOP_SIZES[i];
-    if (this.loop.on) this.setLoop(this.loop.s, this.loop.s + this.loopBeats * (this.beatLen || 0.5), true);
+    if (this.loop.on) this.setLoop(this.loop.s, this.loop.s + this.beatsSec(this.loopBeats, this.loop.s), true);
     this.emit('loop');
   }
   loopHalve() {
     if (this.loop.on) {
       const len = (this.loop.e - this.loop.s) / 2;
       if (len < 0.005) return;
-      this.loopBeats = this.beatLen ? len / this.beatLen : this.loopBeats / 2;
+      this.loopBeats = this.bpm ? this.beatsBetween(this.loop.s, this.loop.s + len) : this.loopBeats / 2;
       this.setLoop(this.loop.s, this.loop.s + len, true, true);
     } else this.loopSize(-1);
   }
   loopDouble() {
     if (this.loop.on) {
       const len = (this.loop.e - this.loop.s) * 2;
-      this.loopBeats = this.beatLen ? len / this.beatLen : this.loopBeats * 2;
+      this.loopBeats = this.bpm ? this.beatsBetween(this.loop.s, this.loop.s + len) : this.loopBeats * 2;
       this.setLoop(this.loop.s, this.loop.s + len, true);
     } else this.loopSize(1);
   }
@@ -522,8 +582,9 @@ export class Deck extends Emitter {
   }
   loopMove(beats) {
     if (!this.loop.e) return;
-    const d = beats * (this.beatLen || 0.5);
-    this.setLoop(this.loop.s + d, this.loop.e + d, this.loop.on);
+    const s = this.loop.s + this.beatsSec(beats, this.loop.s), e = this.loop.e + this.beatsSec(beats, this.loop.e);
+    const d = s - this.loop.s;
+    this.setLoop(s, e, this.loop.on);
     if (this.loop.on) this.seek(this.time + d, true);
   }
   // Saved loops (8 ranuras guardadas con la pista)
@@ -559,7 +620,7 @@ export class Deck extends Emitter {
     }
     cl[n] = { t: s, le: Math.min(e, this.duration || e), color: CUE_COLORS[n % CUE_COLORS.length], name: '' };
     this.saveCues();
-    this.app.toast(`Cue Loop ${n + 1} guardado (${this.loopLabel(cl[n].le - s)})`);
+    this.app.toast(`Cue Loop ${n + 1} guardado (${this.loopLabel(cl[n].le - s, s)})`);
   }
   deleteCueLoop(n) { const cl = this.track && this.track.cueLoops; if (cl && cl[n]) { cl[n] = null; this.saveCues(); } }
   setCueLoopColor(n, color) { const c = this.track?.cueLoops?.[n]; if (c) { c.color = color; this.saveCues(); } }
@@ -568,8 +629,8 @@ export class Deck extends Emitter {
   // ---------------------------------------------------------------- beat jump
   beatJump(beats) {
     if (!this.track) return;
-    const d = beats * (this.beatLen || 0.5);
-    if (this.loop.on) this.setLoop(this.loop.s + d, this.loop.e + d, true);
+    const d = this.beatsSec(beats);
+    if (this.loop.on) this.setLoop(this.loop.s + this.beatsSec(beats, this.loop.s), this.loop.e + this.beatsSec(beats, this.loop.e), true);
     this.seek(this.time + d);
   }
   setJumpSize(d) { const i = clamp(LOOP_SIZES.indexOf(this.jumpBeats) + d, 0, LOOP_SIZES.length - 1); this.jumpBeats = LOOP_SIZES[i]; this.emit('loop'); }
@@ -579,11 +640,9 @@ export class Deck extends Emitter {
     if (!this.track || this.isYT) return;
     if (!this.rolling) this.send({ t: 'slipBegin' });
     this.rolling = beats;
-    const bl = this.beatLen || 0.5;
-    const len = beats * bl;
     const now = this.time;
     const s = this.bpm ? this.floorBeat(now, beats) : now;
-    this.setLoop(s, this.bpm ? this.beatTime(this.beatAt(s) + beats) : s + len, true);
+    this.setLoop(s, s + this.beatsSec(beats, s), true);
     this.emit('state');
   }
   rollEnd(beats) {
@@ -598,16 +657,16 @@ export class Deck extends Emitter {
   // ---------------------------------------------------------------- slicer
   slicerPress(k) {
     if (!this.track || this.isYT || !this.bpm) return;
-    const bl = this.beatLen;
     if (!this.slicerDomain || !this.held.size) {
       this.slicerDomain = this.floorBeat(this.time, 8);
     }
     if (!this.held.has('sl')) this.send({ t: 'slipBegin' });
     this.held.add('sl'); this.held.add('sl' + k);
-    const s = this.slicerDomain + k * bl;
+    const b0 = this.beatAt(this.slicerDomain) + k;
+    const s = this.beatTime(b0), e = this.beatTime(b0 + 1);
     this.send({ t: 'seek', v: s * this.sr });
-    this.loop = { on: true, s, e: s + bl };
-    this.send({ t: 'loop', on: true, s: s * this.sr, e: (s + bl) * this.sr });
+    this.loop = { on: true, s, e };
+    this.send({ t: 'loop', on: true, s: s * this.sr, e: e * this.sr });
     if (!this.playing) this.play();
     this.emit('loop');
   }
@@ -631,6 +690,7 @@ export class Deck extends Emitter {
       else if (m === 'cueloop') this.deleteCueLoop(i);
       else if (m === 'savedloop') this.deleteSavedLoop(i);
       else if (m === 'sampler') this.app.sampler.stop(i);
+      else if (m === 'stems' && i < 4) this.toggleStemFx(i); // Mayús + pad 1-4 = Stems FX
       return;
     }
     switch (m) {
@@ -641,7 +701,11 @@ export class Deck extends Emitter {
       case 'slicer': this.slicerPress(i); break;
       case 'beatjump': this.beatJump(JUMP_PADS[i] * (this.jumpBeats / 4 >= 1 ? 1 : 1)); break;
       case 'sampler': this.app.sampler.press(i); break;
-      case 'stems': if (i < 4) this.toggleStem(i); else this.stemPreset(STEM_PAD_PRESETS[i - 4]); break;
+      case 'stems':
+        if (i >= 4) this.stemPreset(STEM_PAD_PRESETS[i - 4]);
+        else if (this.slip) this.stemSlipDown(i); // con SLIP: mantener = Stem Slip
+        else this.toggleStem(i);
+        break;
       case 'pitchplay': {
         const base = this.track && (this.track.cues.find(Boolean));
         this.setSemis(PITCH_PADS[i]);
@@ -658,6 +722,7 @@ export class Deck extends Emitter {
       case 'roll': this.rollEnd(ROLL_BEATS[i]); break;
       case 'slicer': this.slicerRelease(i); break;
       case 'sampler': this.app.sampler.release(i); break;
+      case 'stems': if (i < 4) this.stemSlipUp(i); break;
     }
     this.emit('pads');
   }
@@ -690,7 +755,10 @@ export class Deck extends Emitter {
       case 'pitchplay': return { on: this.semis === PITCH_PADS[i], color: '#ffd21a', dim: '#5a4a06', label: (PITCH_PADS[i] > 0 ? '+' : '') + PITCH_PADS[i] };
       case 'stems': {
         const avail = this.stemsOn;
-        if (i < 4) { const st = STEMS[i]; return { on: avail && this.stemGains[i] > 0.5, color: st.color, dim: avail ? '#3a1a2a' : null, label: st.short }; }
+        if (i < 4) {
+          const st = STEMS[i], fx = avail && this.stemFx[i], held = !!this.stemSlipHeld[i];
+          return { on: avail && this.stemGains[i] > 0.5 && !held, color: st.color, dim: avail ? '#3a1a2a' : null, label: st.short + (fx ? ' · FX' + (this.stemFxUnit + 1) : '') + (held ? ' ⟲' : ''), fx };
+        }
         const pk = STEM_PAD_PRESETS[i - 4], pr = STEM_PRESETS[pk];
         const active = avail && pr.gains.every((v, k) => Math.abs(v - this.stemGains[k]) < 0.01);
         return { on: active, color: '#a35bff', dim: avail ? '#2a1a4a' : null, label: pr.name.toUpperCase() };
@@ -710,16 +778,49 @@ export class Deck extends Emitter {
       const bpm = Math.round(60000 / iv * 10) / 10;
       const upd = { bpm, bpmLocked: true, grid: null }; // el tap vuelve a una rejilla fija
       if (this.isYT || !this.track.analyzed) upd.firstBeat = this.time % (60 / bpm);
-      this.app.library.update(this.track.id, upd);
+      this.commitGrid(upd, false);
       this.emit('track', this.track);
     }
   }
-  // guarda una rejilla de marcas (normalizada) en la pista
-  saveGrid(g) {
-    if (!this.track) return;
-    this.app.library.update(this.track.id, Grid.gridUpdate(g, this.duration));
+  // Todo cambio del grid pasa por aquí: guarda el estado anterior para «Deshacer» (20 pasos por pista)
+  commitGrid(upd, emit = true) {
+    const t = this.track; if (!t) return;
+    if (!this.gridUndo || this.gridUndo.id !== t.id) this.gridUndo = { id: t.id, stack: [] };
+    const st = this.gridUndo.stack;
+    st.push({ bpm: t.bpm, firstBeat: t.firstBeat || 0, grid: t.grid ? t.grid.map(m => ({ ...m })) : null, bpmLocked: !!t.bpmLocked });
+    if (st.length > 20) st.shift();
+    this.app.library.update(t.id, upd);
+    if (emit) { this.emit('track', t); this.emit('grid'); if (this.sync) this.syncNow(); }
+  }
+  canUndoGrid() { return !!(this.track && this.gridUndo && this.gridUndo.id === this.track.id && this.gridUndo.stack.length); }
+  undoGrid() {
+    if (this.track && !this.gridEditable()) return;
+    if (!this.canUndoGrid()) return this.app.toast('No hay cambios del grid que deshacer', 'info');
+    this.app.library.update(this.track.id, this.gridUndo.stack.pop());
     this.emit('track', this.track); this.emit('grid');
     if (this.sync) this.syncNow();
+    this.app.toast('Grid: cambio deshecho');
+  }
+  // guarda una rejilla de marcas (normalizada) en la pista
+  saveGrid(g) {
+    if (!this.track || !g || !g.length) return;
+    this.commitGrid(Grid.gridUpdate(g, this.duration));
+  }
+  // Edición rápida del grid en la posición actual (ver grid.js)
+  editGrid(kind, arg) {
+    if (this.track && !this.gridEditable()) return;
+    if (!this.track || this.isYT) return;
+    if (!this.bpm) return this.app.toast('Primero analiza la pista o fija su BPM', 'warn');
+    const t = this.time;
+    let g = null;
+    if (kind === 'start') g = Grid.editStartHere(this.track, t);
+    else if (kind === 'beat') g = Grid.editBeatHere(this.track, t);
+    else if (kind === 'bar') g = Grid.editBarHere(this.track, t);
+    else if (kind === 'tempo') g = Grid.editTempoChange(this.track, t, arg.bpm, arg.level);
+    if (!g) return this.app.toast('No se puede aplicar ese cambio del grid aquí', 'warn');
+    this.saveGrid(g);
+    const msg = { start: 'Inicio del grid aquí', beat: 'Beat aquí: tramo reajustado', bar: 'Compás aquí', tempo: `Cambio de BPM aquí → ${arg && arg.bpm}` }[kind];
+    this.app.toast(`Grid: ${msg}`);
   }
   gridMarkers() { return Grid.markers(this.track).map(m => ({ ...m })); }
   setBpm(bpm) {
@@ -736,9 +837,7 @@ export class Deck extends Emitter {
       g[i].bpm = bpm;
       return this.saveGrid(g);
     }
-    this.app.library.update(this.track.id, { bpm, bpmLocked: true });
-    this.emit('track', this.track); this.emit('grid');
-    if (this.sync) this.syncNow();
+    this.commitGrid({ bpm, bpmLocked: true });
   }
   bpmScale(f) {
     if (this.track && !this.gridEditable()) return;
@@ -758,23 +857,15 @@ export class Deck extends Emitter {
     }
     const bl = this.beatLen;
     const fb = (((this.firstBeat + ms / 1000) % (4 * bl)) + 4 * bl) % (4 * bl);
-    this.app.library.update(this.track.id, { firstBeat: fb, bpmLocked: true });
-    this.emit('track', this.track); this.emit('grid');
+    this.commitGrid({ firstBeat: fb, bpmLocked: true });
   }
+  // «Compás aquí» (antes «1 AQUÍ»): el primer tiempo de compás cae en la posición actual
   downbeatHere() {
     if (this.track && !this.gridEditable()) return;
     if (!this.track || !this.bpm) return;
-    if (this.hasGridMarkers) {
-      const g = this.gridMarkers(), i = Grid.markerIndexAt(this.track, this.time);
-      const bar = 4 * 60 / g[i].bpm;
-      const k = Math.round((this.time - g[i].t) / bar); // compases desde la marca
-      g[i].t = this.time - k * bar;
-      if (i > 0 && g[i].t <= g[i - 1].t) g[i].t += bar;
-      return this.saveGrid(g);
-    }
+    if (this.hasGridMarkers) return this.saveGrid(Grid.editBarHere(this.track, this.time));
     const bar = 4 * this.beatLen;
-    this.app.library.update(this.track.id, { firstBeat: ((this.time % bar) + bar) % bar, bpmLocked: true });
-    this.emit('track', this.track); this.emit('grid');
+    this.commitGrid({ firstBeat: ((this.time % bar) + bar) % bar, bpmLocked: true });
   }
   // Marca de grid en la posición actual (coloca el cabezal sobre el golpe y pulsa +MARCA)
   addGridMarker(t = this.time) {

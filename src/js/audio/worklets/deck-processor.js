@@ -2,6 +2,7 @@
 // Lectura con interpolación Hermite, velocidad variable (incl. negativa para
 // scratch/censor), loops sin cortes, modo slip, freno/arranque de motor y
 // keylock / transposición mediante un pitch-shifter con empalmes por correlación.
+// Salida 0 = deck; salida 1 = stems enviados a FX (Stems FX, `stemSend`). Stem Slip en loop: `stemHold`.
 
 // Pitch-shifter por segmentos con empalme por correlación (estilo WSOLA/SoundTouch).
 // Un cabezal lee la línea de retardo con un retardo d que deriva (1 - factor) por muestra; cuando
@@ -123,7 +124,6 @@ class DeckProcessor extends AudioWorkletProcessor {
     // retorno del slip: al soltar se funde (potencia constante) desde la cabeza «vieja» a la sombra
     this.slipRelease = 0;    // segundos (0 = salto inmediato)
     this.xfPos = 0; this.xfN = 0; this.xfLen = 0;
-    this.tmp2 = new Float32Array(2);
     this.keylock = false; this.semis = 0;
     this.ps = new PitchShifter();
     this.psMix = 0;          // fundido seco/transpuesto
@@ -135,6 +135,14 @@ class DeckProcessor extends AudioWorkletProcessor {
     this.stems = null; this.stemLen = 0;
     this.sgTarget = new Float32Array([1, 1, 1, 1]);
     this.sg = new Float32Array([1, 1, 1, 1]);
+    // Stems FX: cada stem puede ir (con fundido) a la salida 2, que pasa por una unidad de FX
+    this.sendT = new Float32Array(4); this.sendG = new Float32Array(4);
+    this.ps2 = null;                   // pitch-shifter de la salida 2 (solo si se usa)
+    // Stem Slip en modo loop: el stem repite [s, s+len) mientras se mantiene; al cambiar se funde (3 ms)
+    this.hold = [null, null, null, null]; this.holdNext = [null, null, null, null];
+    this.hEnv = new Float32Array([1, 1, 1, 1]); this.hDir = new Int8Array(4);
+    this.HF = Math.round(sampleRate * 0.003);
+    this.mix4 = new Float32Array(4); this.tmpS = new Float32Array(2);
     this.port.onmessage = (e) => this.onMsg(e.data);
   }
 
@@ -145,6 +153,7 @@ class DeckProcessor extends AudioWorkletProcessor {
         this.ratio = (m.sr || sampleRate) / sampleRate;
         this.pos = m.pos || 0; this.cur = 0; this.playing = false; this.loopOn = false;
         this.slipping = false; this.ended = false; this.scratch = false; this.reverse = false; this.xfN = 0;
+        this.hold.fill(null); this.holdNext.fill(null); this.hEnv.fill(1); this.hDir.fill(0);
         this.ps.reset();
         break;
       case 'unload': this.L = this.R = null; this.len = 0; this.playing = false; this.stems = null; this.xfN = 0; break;
@@ -155,6 +164,13 @@ class DeckProcessor extends AudioWorkletProcessor {
         } else this.stems = null;
         break;
       case 'stemGains': for (let k = 0; k < 4; k++) if (m.v[k] != null) this.sgTarget[k] = m.v[k]; break;
+      case 'stemSend': for (let k = 0; k < 4; k++) if (m.v[k] != null) this.sendT[k] = m.v[k] ? 1 : 0; break;
+      case 'stemHold': {
+        const k = m.k | 0; if (k < 0 || k > 3) break;
+        this.holdNext[k] = m.on && m.len > 64 ? { s: m.s, len: m.len } : null;
+        this.hDir[k] = -1; // fundido de salida → cambio → fundido de entrada
+        break;
+      }
       case 'play':
         this.playing = !!m.v;
         if (this.playing && this.ended) this.ended = false;
@@ -202,23 +218,36 @@ class DeckProcessor extends AudioWorkletProcessor {
     }
   }
 
-  // Muestra estéreo en una posición (con stems, su suma con las ganancias actuales)
-  readAt(pos, out) {
-    if (this.stems) {
-      let l = 0, r = 0;
-      for (let k = 0; k < this.stems.length; k++) {
-        const g = this.sg[k]; if (g < 1e-4) continue;
-        const st = this.stems[k];
-        l += g * hermite16(st.L, pos, this.stemLen); r += g * hermite16(st.R, pos, this.stemLen);
-      }
-      out[0] = l; out[1] = r;
-    } else { out[0] = hermite(this.L, pos, this.len); out[1] = hermite(this.R, pos, this.len); }
+  // Suma de stems en una posición con las ganancias actuales: o[0..1] = principal, o[2..3] = envío a FX
+  mixStems(pos, o) {
+    let l = 0, r = 0, a = 0, b = 0;
+    const stems = this.stems, len = this.stemLen;
+    for (let k = 0; k < stems.length; k++) {
+      const g = this.sg[k] * this.hEnv[k];
+      if (g < 1e-4) continue;
+      const h = this.hold[k];
+      let p = pos;
+      if (h) { p = h.s + (((pos - h.s) % h.len) + h.len) % h.len; }
+      const st = stems[k];
+      const vl = g * hermite16(st.L, p, len), vr = g * hermite16(st.R, p, len);
+      const s = this.sendG[k];
+      l += vl * (1 - s); r += vr * (1 - s); a += vl * s; b += vr * s;
+    }
+    o[0] = l; o[1] = r; o[2] = a; o[3] = b;
+  }
+  // Muestra en una posición (o[2..3] = envío a FX; sin stems, 0)
+  readAt(pos, o) {
+    if (this.stems) this.mixStems(pos, o);
+    else { o[0] = hermite(this.L, pos, this.len); o[1] = hermite(this.R, pos, this.len); o[2] = 0; o[3] = 0; }
   }
 
   process(_inputs, outputs) {
     const out = outputs[0];
     const oL = out[0], oR = out[1] || out[0];
     const n = oL.length;
+    // salida 2: envío de stems a FX (Stems FX)
+    const o2 = outputs[1], sL = o2 && o2[0], sR = o2 && (o2[1] || o2[0]);
+    if (sL) { sL.fill(0); if (sR !== sL) sR.fill(0); }
     if (!this.L) { oL.fill(0); if (oR !== oL) oR.fill(0); return true; }
 
     // ---- velocidad objetivo
@@ -247,46 +276,62 @@ class DeckProcessor extends AudioWorkletProcessor {
     const psFactor = (lockActive ? 1 / speedAbs : 1) * semiF;
 
     const L = this.L, R = this.R, len = this.len, ratio = this.ratio;
-    const stems = this.stems, stemLen = this.stemLen, sg = this.sg, sgT = this.sgTarget;
+    const stems = this.stems, sg = this.sg, sgT = this.sgTarget;
     const tmp = this.tmp;
     const shadowStep = this.playing ? this.rate * ratio : 0;
 
-    const tmp2 = this.tmp2;
+    const m4 = this.mix4, tmpS = this.tmpS;
+    const sendG = this.sendG, sendT = this.sendT, hEnv = this.hEnv, hDir = this.hDir, HF = this.HF;
+    // ¿hay envío a FX? (stems cargados, salida 2 conectada y algún stem enviado o fundiéndose)
+    let useSend = false;
+    if (stems && sL) for (let k = 0; k < 4; k++) if (sendT[k] > 0 || sendG[k] > 1e-4) useSend = true;
+    if (!useSend) sendG.fill(0);
+    if (useSend && !this.ps2) this.ps2 = new PitchShifter();
     for (let i = 0; i < n; i++) {
       const s = prev + (this.cur - prev) * (i / n);
-      let l, r;
+      let l, r, xl = 0, xr = 0;
       if (stems) {
-        // suma de stems con ganancias suavizadas (~10 ms) para evitar clics
-        l = 0; r = 0;
-        for (let k = 0; k < stems.length; k++) {
-          const g = sg[k] += (sgT[k] - sg[k]) * 0.0025;
-          if (g < 1e-4 && sgT[k] === 0) continue;
-          const st = stems[k];
-          l += g * hermite16(st.L, this.pos, stemLen);
-          r += g * hermite16(st.R, this.pos, stemLen);
+        // ganancias y envíos suavizados (~10 ms) y fundidos de Stem Slip (3 ms) para evitar clics
+        for (let k = 0; k < 4; k++) {
+          sg[k] += (sgT[k] - sg[k]) * 0.0025;
+          if (useSend) sendG[k] += (sendT[k] - sendG[k]) * 0.0025;
+          if (hDir[k] < 0) {
+            hEnv[k] -= 1 / HF;
+            if (hEnv[k] <= 0) { hEnv[k] = 0; this.hold[k] = this.holdNext[k]; hDir[k] = 1; }
+          } else if (hDir[k] > 0) {
+            hEnv[k] += 1 / HF;
+            if (hEnv[k] >= 1) { hEnv[k] = 1; hDir[k] = 0; }
+          }
         }
+        this.mixStems(this.pos, m4);
+        l = m4[0]; r = m4[1]; xl = m4[2]; xr = m4[3];
       } else {
         l = hermite(L, this.pos, len);
         r = hermite(R, this.pos, len);
       }
       // retorno del slip: la cabeza vieja sigue sonando y se funde con la nueva (potencia constante)
       if (this.xfN > 0) {
-        this.readAt(this.xfPos, tmp2);
+        this.readAt(this.xfPos, m4);
         const g = 1 - this.xfN / this.xfLen, a = Math.sin(g * Math.PI / 2), b = Math.cos(g * Math.PI / 2);
-        l = l * a + tmp2[0] * b; r = r * a + tmp2[1] * b;
+        l = l * a + m4[0] * b; r = r * a + m4[1] * b;
+        xl = xl * a + m4[2] * b; xr = xr * a + m4[3] * b;
         this.xfPos = Math.max(0, Math.min(len - 1, this.xfPos + s * ratio));
         this.xfN--;
       }
       // pitch-shifter (siempre alimentado para tener la línea de retardo lista)
       if (wantPS || this.psMix > 0) {
-        this.ps.process(l, r, wantPS ? psFactor : 1, tmp);
+        const f = wantPS ? psFactor : 1;
+        this.ps.process(l, r, f, tmp);
+        if (useSend) this.ps2.process(xl, xr, f, tmpS);
         if (wantPS && this.psMix < 1) this.psMix = Math.min(1, this.psMix + 1 / 512);
         else if (!wantPS && this.psMix > 0) this.psMix = Math.max(0, this.psMix - 1 / 512);
         const m = this.psMix;
         l = l * (1 - m) + tmp[0] * m;
         r = r * (1 - m) + tmp[1] * m;
+        if (useSend) { xl = xl * (1 - m) + tmpS[0] * m; xr = xr * (1 - m) + tmpS[1] * m; }
       }
       oL[i] = l; oR[i] = r;
+      if (useSend) { sL[i] = xl; sR[i] = xr; }
 
       this.pos += s * ratio;
       if (this.slipping) this.shadow += shadowStep;

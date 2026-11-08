@@ -37,6 +37,13 @@ contextBridge.exposeInMainWorld('nexura', {
     cancel: () => ipcRenderer.invoke('stems:cancel'),
     onEvent: (fn) => { const h = (_e, ev) => fn(ev); ipcRenderer.on('stems:event', h); return () => ipcRenderer.removeListener('stems:event', h); }
   },
+  spotify: {
+    embed: (type, id) => ipcRenderer.invoke('spotify:embed', type, id),
+    api: (url) => ipcRenderer.invoke('spotify:api', url),
+    login: (clientId) => ipcRenderer.invoke('spotify:login', clientId),
+    logout: () => ipcRenderer.invoke('spotify:logout'),
+    status: () => ipcRenderer.invoke('spotify:status')
+  },
   yt: {
     oembed: (id) => ipcRenderer.invoke('yt:oembed', id),
     api: (endpoint, params, apiKey) => ipcRenderer.invoke('yt:api', endpoint, params, apiKey),

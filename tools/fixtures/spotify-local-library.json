@@ -1,0 +1,22 @@
+[
+  { "id": "l1", "artist": "Avicii", "title": "Levels (Original Mix)", "duration": 202, "path": "D:/Música/Avicii - Levels (Original Mix).mp3" },
+  { "id": "l2", "artist": "Avicii", "title": "Levels (Skrillex Remix)", "duration": 330, "path": "D:/Música/Avicii - Levels (Skrillex Remix).mp3" },
+  { "id": "l3", "artist": "Calvin Harris & Dua Lipa", "title": "One Kiss", "duration": 215, "path": "D:/Música/One Kiss.mp3" },
+  { "id": "l4", "artist": "Weeknd", "title": "Blinding Lights", "duration": 201, "path": "D:/Música/Blinding Lights.mp3" },
+  { "id": "l5", "artist": "Rosalia", "title": "Malamente (Cap.1 Augurio)", "duration": 151, "path": "D:/Música/Malamente.mp3" },
+  { "id": "l6", "artist": "David Guetta feat. Sia", "title": "Titanium", "duration": 245, "path": "D:/Música/Titanium.mp3" },
+  { "id": "l7", "artist": "Swedish House Mafia feat. John Martin", "title": "Don't You Worry Child (Extended Mix)", "duration": 397, "path": "D:/Música/DYWC.mp3" },
+  { "id": "l8", "artist": "Daft Punk", "title": "One More Time", "duration": 320, "path": "D:/Música/One More Time.mp3" },
+  { "id": "l9", "artist": "Daft Punk", "title": "One More Time (Live)", "duration": 380, "path": "D:/Música/One More Time (Live).mp3" },
+  { "id": "l10", "artist": "Queen", "title": "Don't Stop Me Now", "duration": 211, "isrc": "GB-UM7-10-29604", "path": "D:/Música/Queen - Don't Stop Me Now.flac" },
+  { "id": "l11", "artist": "", "title": "Animals", "duration": 305, "path": "D:/Música/Martin Garrix - Animals.mp3" },
+  { "id": "l12", "artist": "Martin Garrix", "title": "Animals (Oliver Heldens Remix)", "duration": 290, "path": "D:/Música/Animals (Oliver Heldens Remix).mp3" },
+  { "id": "l13", "artist": "Bad Bunny", "title": "Titi Me Pregunto", "duration": 244, "path": "D:/Música/Titi Me Pregunto.mp3" },
+  { "id": "l14", "artist": "CamelPhat & Elderbrook", "title": "Cola (Original Mix)", "duration": 380, "path": "D:/Música/Cola (Original Mix).mp3" },
+  { "id": "l15", "artist": "CamelPhat & Elderbrook", "title": "Cola (Robin Schulz Remix)", "duration": 201, "path": "D:/Música/Cola (Robin Schulz Remix).mp3" },
+  { "id": "l16", "artist": "Purple Disco Machine, Sophie And The Giants", "title": "In the Dark", "duration": 186, "path": "D:/Música/In the Dark.mp3" },
+  { "id": "l17", "artist": "Fisher", "title": "Losing It", "duration": 248, "path": "D:/Música/Losing It.mp3" },
+  { "id": "l18", "artist": "M83", "title": "Intro", "duration": 322, "path": "D:/Música/M83 - Intro.mp3" },
+  { "id": "l19", "artist": "Temper Trap", "title": "Sweet Dispositon", "duration": 245, "path": "D:/Música/Sweet Dispositon.mp3" },
+  { "id": "l20", "artist": "The Temper Trap", "title": "Sweet Disposition (Axwell & Dirty South Remix)", "duration": 420, "path": "D:/Música/Sweet Disposition (Axwell & Dirty South Remix).mp3" }
+]

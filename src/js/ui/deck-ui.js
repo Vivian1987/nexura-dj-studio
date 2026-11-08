@@ -82,7 +82,9 @@ export class DeckUI {
       return b;
     });
     this.stemSepBtn = btn('✨ SEPARAR', { cls: 'small stem-sep', title: 'Separar esta pista en stems con IA (Demucs, en tu GPU)', onClick: () => { if (d.track) app.stems.separate([d.track]); } });
-    this.stemsRow = el('div', { class: 'row stems-row' }, el('span', { class: 'lbl' }, 'STEMS'), ...this.stemBtns, this.stemSepBtn);
+    // unidad que procesa los Stems FX de este deck (Mayús + pad en el modo Stems)
+    this.stemFxUnitBtn = btn('FX1', { cls: 'micro stem-fxu', title: 'Unidad de efectos para Stems FX (clic: cambiar)', onClick: () => d.setStemFxUnit(d.stemFxUnit ? 0 : 1) });
+    this.stemsRow = el('div', { class: 'row stems-row' }, el('span', { class: 'lbl' }, 'STEMS'), ...this.stemBtns, this.stemFxUnitBtn, this.stemSepBtn);
 
     this.tabs = el('div', { class: 'pad-tabs' });
     for (const m of PAD_MODES) {
@@ -138,7 +140,7 @@ export class DeckUI {
       btn('½', { cls: 'tiny', onClick: () => d.bpmScale(0.5) }),
       btn('◂', { cls: 'tiny', onClick: () => d.gridShift(-5), title: 'Desplazar grid −5 ms' }),
       btn('▸', { cls: 'tiny', onClick: () => d.gridShift(5), title: 'Desplazar grid +5 ms' }),
-      btn('1 AQUÍ', { cls: 'small', onClick: () => d.downbeatHere(), title: 'Fijar el primer tiempo en la posición actual' }),
+      btn('1 AQUÍ', { cls: 'small', onClick: () => d.downbeatHere(), title: 'Compás aquí: el primer tiempo de compás cae en la posición actual' }),
       this.gridEditBtn = btn('✎', { cls: 'tiny', title: 'Editor de beatgrid (marcas y BPM variable)', onClick: () => { this.gridEdit = !this.gridEdit; this.refresh('grid'); } }),
       el('span', { class: 'sep' }),
       btn('EJECT', { cls: 'small', onClick: () => d.eject() }));
@@ -163,8 +165,18 @@ export class DeckUI {
       this.gridBpmEl,
       btn('+', { cls: 'micro', title: '+0,01 BPM en el tramo actual', onClick: () => d.bpmNudge(0.01) }),
       btn('FIJO', { cls: 'small', title: 'Quitar todas las marcas (BPM fijo)', onClick: () => d.clearGridMarkers() }));
+    // edición en la posición del cabezal (pausa y coloca el cabezal sobre el golpe)
+    this.gridUndoBtn = btn('↶', { cls: 'tiny', title: 'Deshacer el último cambio del grid', onClick: () => d.undoGrid() });
+    this.gridHereRow = el('div', { class: 'row grid-edit grid-here hidden' },
+      el('span', { class: 'lbl' }, 'AQUÍ'),
+      btn('INICIO', { cls: 'small', title: 'Inicio del grid aquí: el primer beat pasa a la posición actual', onClick: () => d.editGrid('start') }),
+      btn('BEAT', { cls: 'small', title: 'Beat aquí: el beat más cercano cae en la posición actual y se reajusta el BPM del tramo', onClick: () => d.editGrid('beat') }),
+      btn('COMPÁS', { cls: 'small', title: 'Compás aquí: la posición actual pasa a ser el primer tiempo de un compás', onClick: () => d.downbeatHere() }),
+      btn('BPM…', { cls: 'small', title: 'Cambio de BPM aquí (en el compás o beat más cercano)', onClick: () => this.tempoChangeDialog() }),
+      el('span', { class: 'sep' }),
+      this.gridUndoBtn);
 
-    const perfCol = el('div', { class: 'perf-col' }, perfRow, this.stemsRow, this.tabs, this.padsEl, loopRow, jumpRow, gridRow, this.gridEditRow);
+    const perfCol = el('div', { class: 'perf-col' }, perfRow, this.stemsRow, this.tabs, this.padsEl, this.padHint = el('div', { class: 'pad-hint hidden' }), loopRow, jumpRow, gridRow, this.gridEditRow, this.gridHereRow);
 
     this.flipSlot = el('select', { class: 'sel tiny-sel flip-slot', title: 'Ranura Flip (máximo 6)' },
       ...Array.from({ length: 6 }, (_, i) => el('option', { value: i }, `F${i + 1}`)));
@@ -250,6 +262,24 @@ export class DeckUI {
     if (n > 20 && n < 400) d.setBpm(n);
   }
 
+  // «Cambio de BPM aquí»: BPM nuevo y si el cambio cae en el compás o en el beat más cercano
+  async tempoChangeDialog() {
+    const d = this.deck, app = this.app;
+    if (!d.track || !d.bpm) return app.toast('Primero analiza la pista o fija su BPM', 'warn');
+    if (!d.gridEditable()) return;
+    const inp = el('input', { class: 'wide', type: 'text', value: d.bpm.toFixed(2), inputmode: 'decimal' });
+    const lvl = el('select', { class: 'sel wide' }, el('option', { value: 'bar' }, 'En el compás más cercano'), el('option', { value: 'beat' }, 'En el beat más cercano'));
+    const ok = await app.modal('Cambio de BPM aquí', el('div', { class: 'form' },
+      el('p', { class: 'hint' }, 'BPM nuevo desde aquí'), inp,
+      el('p', { class: 'hint' }, 'Dónde empieza el tramo nuevo'), lvl,
+      el('p', { class: 'set-note' }, 'Las marcas siguientes se desplazan para conservar sus beats. Se puede deshacer con ↶.')),
+    ['Cancelar', 'Aplicar']);
+    if (ok !== 1) return;
+    const bpm = parseFloat(String(inp.value).replace(',', '.'));
+    if (!(bpm > 20 && bpm < 400)) return app.toast('BPM no válido', 'warn');
+    d.editGrid('tempo', { bpm: Math.round(bpm * 1000) / 1000, level: lvl.value });
+  }
+
   padMenu(i, e) {
     const d = this.deck;
     if (d.padMode === 'hotcue' && d.track && d.track.cues[i]) {
@@ -291,7 +321,14 @@ export class DeckUI {
       p.classList.toggle('dim', !s.on && !!s.dim);
       p.classList.toggle('cueloop', !!s.loop);
       p.classList.toggle('active', !!s.active);
+      p.classList.toggle('stemfx', !!s.fx);
     });
+    const stemsMode = d.padMode === 'stems' && !!d.track && !d.isYT;
+    this.padHint.classList.toggle('hidden', !stemsMode);
+    if (stemsMode) {
+      this.padHint.textContent = !d.stemsOn ? 'Esta pista no tiene stems cargados: sepáralos con ✨ SEPARAR'
+        : `Mayús + pad 1-4: Stems FX (FX ${d.stemFxUnit + 1}) · ${d.slip ? 'SLIP: mantener el pad silencia el stem' + (this.app.settings.stemSlipMode === 'loop' ? ' (en loop)' : '') : 'con SLIP, mantener = Stem Slip'}`;
+    }
   }
 
   refresh(ev) {
@@ -348,8 +385,10 @@ export class DeckUI {
   refreshGrid() {
     const d = this.deck, ok = !!(d.track && !d.isYT);
     this.gridEditRow.classList.toggle('hidden', !(this.gridEdit && ok));
+    this.gridHereRow.classList.toggle('hidden', !(this.gridEdit && ok));
     this.gridEditBtn.classList.toggle('on', !!this.gridEdit);
     if (!this.gridEdit || !ok) return;
+    this.gridUndoBtn.disabled = !d.canUndoGrid();
     const n = d.hasGridMarkers ? d.track.grid.length : (d.bpm ? 1 : 0);
     this.gridCount.textContent = n > 1 ? `${n} · tramo ${Math.max(1, d.track.grid.filter(m => m.t <= d.time + 1e-3).length)}` : (n ? 'fijo' : '—');
     this.gridBpmEl.textContent = d.bpm ? d.bpm.toFixed(2) : '—';
@@ -361,7 +400,10 @@ export class DeckUI {
     this.stemsRow.classList.toggle('hidden', !show);
     if (!show) return;
     this.stemsRow.classList.toggle('loaded', d.stemsOn);
-    this.stemBtns.forEach((b, k) => { b.disabled = !d.stemsOn && !t.stems; b.classList.toggle('on', d.stemsOn && d.stemGains[k] > 0.5); });
+    this.stemBtns.forEach((b, k) => { b.disabled = !d.stemsOn && !t.stems; b.classList.toggle('on', d.stemsOn && d.stemGains[k] > 0.5); b.classList.toggle('fx', d.stemsOn && d.stemFx[k]); });
+    this.stemFxUnitBtn.textContent = 'FX' + (d.stemFxUnit + 1);
+    this.stemFxUnitBtn.classList.toggle('on', d.stemsOn && d.stemFx.some(Boolean));
+    this.stemFxUnitBtn.classList.toggle('hidden', !t.stems);
     const S = this.app.stems, queued = S.bgQueue.includes(t.id);
     this.stemSepBtn.classList.toggle('hidden', !!t.stems);
     this.stemSepBtn.disabled = S.busy && !S.bgRunning;

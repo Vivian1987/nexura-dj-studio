@@ -9,6 +9,8 @@ import { ExpansionManager } from './audio/expansions.js';
 import { Analyzer } from './analysis/analyzer.js';
 import { Library } from './library/library.js';
 import { YouTubeService } from './youtube/youtube.js';
+import { SpotifyService } from './spotify/spotify.js';
+import { SpotifyImportUI } from './ui/spotify-ui.js';
 import { MidiManager, buildActions } from './midi/midi.js';
 import { DeckUI } from './ui/deck-ui.js';
 import { MixerUI } from './ui/mixer-ui.js';
@@ -20,8 +22,10 @@ import { Automix } from './ai/automix.js';
 import { StemsManager } from './audio/stems.js';
 import { parseLibrary, mergeInto, parseM3u, parseVirtualFolder, decodePlaylist } from './library/import.js';
 import { planRelocation, fileName } from './library/relocate.js';
+import { splitListPath } from './library/crate-tree.js';
 import { readFileMarkers, parseCrate, id3Size } from './library/filemarkers.js';
 import { normalize, dominantBpm } from './audio/grid.js';
+import { planFxRouting } from './audio/fx-routing.js';
 import { parseRequest, planSet } from './ai/prompt.js';
 import { WaveDetail } from './ui/waveform.js';
 import { SettingsUI } from './ui/settings-ui.js';
@@ -33,10 +37,10 @@ const DEFAULTS = {
   pitchRange: 0.08, keylockDefault: false, quantize: true, cueLoops: true, aiAutoCues: true, aiEnergyMode: 'keep', automixBars: 16, ollamaUrl: 'http://127.0.0.1:11434', ollamaModel: '', syncPhase: true, autoGain: true,
   minBpm: 85, maxBpm: 175, motorStart: 4, motorStop: 4, jogSensitivity: 1,
   invertPitch: false, mc4000PhonesMidi: false, midiProfiles: {}, xfCurve: 'smooth', waveZoom: 6,
-  historyAfter: 30, loadOnPlaying: 'play', slipRelease: 0,
-  protectLibrary: false, libCols: null, libColsSame: true, libColsByView: {}, libArtSize: 'small', crateSort: 'custom', deckLayout: 'auto', stemsDir: '', stemsModel: 'htdemucs', stemsAuto: true, stemsBackground: true, autoAnalyze: true,
+  historyAfter: 30, loadOnPlaying: 'play', slipRelease: 0, stemSlipMode: 'mute', stemSlipBeats: 1,
+  protectLibrary: false, libCols: null, libColsSame: true, libColsByView: {}, libArtSize: 'small', crateSort: 'custom', crateSubTracks: true, crateCollapsed: [], deckLayout: 'auto', stemsDir: '', stemsModel: 'htdemucs', stemsAuto: true, stemsBackground: true, autoAnalyze: true,
   expansions: { flip: false, fxPresets: false, laptop: false, video: false, dvs: false, pitchTime: false },
-  ytApiKey: '', ytClientId: '', ytClientSecret: '',
+  ytApiKey: '', ytClientId: '', ytClientSecret: '', spotifyClientId: '',
   panels: { sampler: false }, midiMap: {}, libView: 'all', libSort: { field: null, dir: 1 }
 };
 
@@ -69,10 +73,13 @@ class App extends Emitter {
     this.analyzer = new Analyzer();
     this.library = new Library();
     this.library.protected = !!this.settings.protectLibrary;
+    this.library.subTracks = this.settings.crateSubTracks !== false;
     this.library.on('protected', (msg) => toast(msg, 'warn', 4500));
     await this.library.load();
     this.ai = new Assistant(this);
     this.youtube = new YouTubeService(() => this.settings);
+    this.spotify = new SpotifyService(() => this.settings);
+    this.spotifyUI = new SpotifyImportUI(this);
     this.sampler = new Sampler(this.engine);
     this.sampler.fromJSON(this.settings.sampler);
     this.fxUnits = [new FxUnit(this.engine.ctx, 0), new FxUnit(this.engine.ctx, 1)];
@@ -137,6 +144,7 @@ class App extends Emitter {
     if (k === 'motorStart' || k === 'motorStop') this.decks.forEach(d => d.applyMotor());
     if (k === 'slipRelease') this.decks.forEach(d => d.applySlipRelease());
     if (k === 'protectLibrary' && this.library) this.library.protected = !!v;
+    if (k === 'crateSubTracks' && this.library) { this.library.subTracks = v !== false; if (this.libraryUI) { this.libraryUI.renderSide(); this.libraryUI.refresh(); } }
     this.saveSettingsSoon();
     this.emit('settings', k, v);
   }
@@ -498,8 +506,12 @@ class App extends Emitter {
     if (opt.crates) for (const pl of playlists) {
       const ids = pl.paths.map(p => byPath.get(p.toLowerCase())).filter(Boolean).map(t => t.id);
       if (!ids.length) continue;
-      const name = 'Importado · ' + pl.name;
-      const c = this.library.crates.find(x => x.name === name) || this.library.createCrate(name);
+      // listas dentro de carpetas («Dance / 2024», «Dance%%2024.crate») → subcrates anidados
+      const segs = splitListPath(pl.name);
+      if (!segs.length) continue;
+      segs[0] = 'Importado · ' + segs[0];
+      const c = this.library.ensureCratePath(segs);
+      if (!c) continue;
       this.library.addToCrate(c.id, ids); crates++;
     }
     if (status) status.textContent = '';
@@ -583,12 +595,13 @@ class App extends Emitter {
   // Listas .m3u / .m3u8 (botón de la barra lateral o arrastrar el archivo): una crate con el nombre del
   // archivo y las pistas que existen; se avisa de las que faltan. #EXTINF rellena artista/título/duración
   // de las pistas nuevas sin etiquetas.
-  async importM3u() {
+  // parent: crate en la que se crean como subcrates («Importar M3U aquí» o soltar la lista sobre una crate)
+  async importM3u(parent = null) {
     let files;
     try { files = await platform.openPlaylist(); } catch (e) { return toast('No se pudo leer la lista: ' + e.message, 'error'); }
-    if (files && files.length) return this.importPlaylists(files);
+    if (files && files.length) return this.importPlaylists(files, parent);
   }
-  async importPlaylists(files) {
+  async importPlaylists(files, parent = null) {
     if (!files || !files.length || !this.library.guard('crate')) return null;
     const L = this.library, status = $('#lib-status'), fresh = [];
     let crate = null, found = 0, missing = 0;
@@ -630,12 +643,12 @@ class App extends Emitter {
       }
       found += ids.length;
       if (!ids.length) continue;
-      crate = L.crates.find(c => c.name === pl.name) || L.createCrate(pl.name);
+      crate = L.ensureCratePath([pl.name], parent && L.crate(parent) ? parent : null);
       if (crate) L.addToCrate(crate.id, [...new Set(ids)]);
     }
     if (status) status.textContent = '';
-    if (crate) this.libraryUI.setView('crate:' + crate.id);
-    const msg = `${found} pista(s) importadas${crate ? ` en la crate «${crate.name}»` : ''}` + (missing ? ` · ${missing} no se encontraron en este equipo` : '');
+    if (crate) { this.libraryUI.expandCrate(crate.id); this.libraryUI.setView('crate:' + crate.id); }
+    const msg = `${found} pista(s) importadas${crate ? ` en la crate «${this.libraryUI.crateLabel(crate)}»` : ''}` + (missing ? ` · ${missing} no se encontraron en este equipo` : '');
     toast(msg, missing ? 'warn' : 'ok', missing ? 7000 : 4000);
     if (fresh.length && this.settings.autoAnalyze) this.analyzeMany(fresh);
     return { found, missing, crate };
@@ -681,15 +694,30 @@ class App extends Emitter {
     return this.masterDeck();
   }
   rewireFx() {
-    const targets = { deck0: [], deck1: [], deck2: [], deck3: [], master: [], sampler: [] };
-    for (const u of this.fxUnits) (targets[u.target] || targets.master).push(u);
+    // las unidades usadas para Stems FX solo procesan los stems enviados de su deck (fx-routing.js)
+    const plan = planFxRouting(this.fxUnits, this.decks || []);
     // dos pasadas: primero desconectar todo, después conectar
-    this.engine.channels.forEach(ch => ch.setInserts([]));
+    this.engine.channels.forEach(ch => { ch.setInserts([]); ch.setStemInserts([]); });
     this.engine.setMasterInserts([]);
     this.sampler.setInserts([]);
-    this.engine.channels.forEach((ch, i) => ch.setInserts(targets['deck' + i]));
-    this.engine.setMasterInserts(targets.master);
-    this.sampler.setInserts(targets.sampler);
+    this.engine.channels.forEach((ch, i) => { ch.setInserts(plan.deck[i]); ch.setStemInserts(plan.stem[i]); });
+    this.engine.setMasterInserts(plan.master);
+    this.sampler.setInserts(plan.sampler);
+    (this.decks || []).forEach((d, i) => d.applyStemSend(plan.sends[i]));
+  }
+  // Stems FX activado/desactivado en un stem: la unidad pasa a seguir a ese deck y, si no tenía ningún
+  // efecto encendido, se enciende la primera ranura para que se oiga algo
+  stemFxChanged(deck, k, on) {
+    const u = this.fxUnits[deck.stemFxUnit];
+    if (on && u) {
+      u.target = 'deck' + deck.idx;
+      if (!u.anyOn()) u.slots[0].setEnabled(true);
+    }
+    this.rewireFx();
+    this.saveFxSoon(); this.emit('fx');
+    const st = ['Voz', 'Batería', 'Bajo', 'Melodía'][k];
+    if (on && u) toast(`Stems FX: ${st} (deck ${deck.idx + 1}) → FX ${u.idx + 1} · ${u.slots.filter(x => x.enabled).map(x => x.name).join(' + ')}`);
+    else toast(`Stems FX: ${st} (deck ${deck.idx + 1}) sin efecto`);
   }
   fxBeats(u, dir) {
     const i = clamp(BEAT_VALUES.indexOf(u.beats) + dir, 0, BEAT_VALUES.length - 1);
@@ -879,6 +907,18 @@ class App extends Emitter {
     } catch (e) { toast(e.message, 'error', 6000); }
   }
 
+  // ------------------------------------------------------------------ Spotify (solo metadatos)
+  // «+ Spotify»: pegar un enlace, leer la lista y convertirla en crate (spotify-ui.js)
+  spotifyImportDialog(input = '') {
+    if (!platform.spotify.available) return toast('La importación de listas de Spotify solo está disponible en la app de escritorio', 'warn', 6000);
+    this.spotifyUI.open({ input });
+  }
+  // Crates importadas de Spotify: revisar la importación guardada o volver a leer la lista
+  spotifyCrate(crateId, refetch) {
+    if (refetch && !platform.spotify.available) return toast('Actualizar desde Spotify solo está disponible en la app de escritorio', 'warn');
+    this.spotifyUI.open({ crateId, refetch });
+  }
+
   // ------------------------------------------------------------------ diálogos
   modal(title, body, buttons = ['Aceptar']) {
     this.closeModal();
@@ -962,8 +1002,8 @@ class App extends Emitter {
         case 'ArrowDown': this.libraryUI.move(1); break;
         case 'PageUp': this.libraryUI.move(-15); break;
         case 'PageDown': this.libraryUI.move(15); break;
-        case 'ArrowLeft': if (e.shiftKey) this.loadSelected(this.layers[0]); else this.libraryUI.toggleFocus('side'); break;
-        case 'ArrowRight': if (e.shiftKey) this.loadSelected(this.layers[1]); else this.libraryUI.toggleFocus('table'); break;
+        case 'ArrowLeft': if (e.shiftKey) this.loadSelected(this.layers[0]); else if (!this.libraryUI.sideKey(-1)) this.libraryUI.toggleFocus('side'); break;
+        case 'ArrowRight': if (e.shiftKey) this.loadSelected(this.layers[1]); else if (!this.libraryUI.sideKey(1)) this.libraryUI.toggleFocus('table'); break;
         case 'Tab': this.libraryUI.toggleFocus(); break;
         case 'F9': this.toggleRecord(); break;
         case 'F6': this.engine.setSplit(!this.engine.split); break;

@@ -66,7 +66,7 @@ function translate(group, key) {
     return { crossfader: 'xfader', gain: 'master', headMix: 'cuemix', headGain: 'phones', headSplit: 'split' }[key] || null;
   }
   if (group === '[Library]') {
-    return { MoveVertical: 'browse', MoveUp: 'browseup', MoveDown: 'browsedown', MoveFocus: 'browsepush', MoveFocusForward: 'browsepush', MoveFocusBackward: 'back', GoToItem: 'browsepush' }[key] || null;
+    return { MoveVertical: 'browse', MoveUp: 'browseup', MoveDown: 'browsedown', MoveFocus: 'browsepush', MoveFocusForward: 'browsepush', MoveFocusBackward: 'back', GoToItem: 'browsepush', MoveLeft: 'browseleft', MoveRight: 'browseright' }[key] || null;
   }
   if (group === '[Playlist]') {
     return { SelectTrackKnob: 'browse', SelectNextTrack: 'browsedown', SelectPrevTrack: 'browseup', LoadSelectedIntoFirstStopped: 'load' }[key] || null;
