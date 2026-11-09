@@ -74,7 +74,7 @@ async function drop(wc, sel, paths) {
 async function shot(win, name, w, h) {
   win.setContentSize(w, h);
   await wait(700);
-  await js(win.webContents, `document.querySelector('#library').scrollIntoView({ block: 'end' }); { const s = document.querySelector('.lib-side'), h = document.querySelector('.side-sec[title*="raíz"]'); if (s && h) s.scrollTop = h.offsetTop - s.offsetTop - 4; } true`);
+  await js(win.webContents, `document.querySelector('#library').scrollIntoView({ block: 'end' }); { const s = document.querySelector('.lib-tree'), h = document.querySelector('.side-sec[title*="raíz"]'); if (s && h) s.scrollTop = h.parentElement.offsetTop - 4; } true`);
   win.webContents.invalidate();
   await wait(500);
   const [rw, rh] = win.getContentSize();   // la ventana tiene un ancho mínimo: se anota el tamaño real

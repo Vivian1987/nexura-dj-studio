@@ -56,7 +56,7 @@ const probe = `(() => {
     plantilla: cs(r)?.gridTemplateColumns, titulo: col('.c-title'), artista: col('.c-artist'), bpm: col('.c-bpm'), key: col('.key'), estado: col('.st'),
     estrellaOn: col('.rating i.on'), estrellaOff: col('.rating i:not(.on)'), energia: col('.c-title .nrg'),
     fondoBiblio: cs(document.querySelector('.lib-main'))?.backgroundColor, fondoLateral: cs(document.querySelector('.lib-side'))?.backgroundColor,
-    lateral: s ? { fondo: cs(s).backgroundColor, borde: cs(s).borderLeftColor, texto: cs(s).color, cuenta: cs(s.querySelector('.si-count'))?.color } : null,
+    lateral: s ? { fondo: cs(s).backgroundColor, barra: cs(s).boxShadow, texto: cs(s).color, cuenta: cs(s.querySelector('.si-count'))?.color } : null,
     estadoClase: r?.querySelector('.st')?.className };
 })()`;
 

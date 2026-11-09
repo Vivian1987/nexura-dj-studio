@@ -42,7 +42,7 @@ const DEFAULTS = {
   minBpm: 85, maxBpm: 175, motorStart: 4, motorStop: 4, jogSensitivity: 1,
   invertPitch: false, mc4000PhonesMidi: false, midiProfiles: {}, xfCurve: 'smooth', waveZoom: 6,
   historyAfter: 30, loadOnPlaying: 'play', slipRelease: 0, stemSlipMode: 'mute', stemSlipBeats: 1,
-  protectLibrary: false, libCols: null, libColsSame: true, libColsByView: {}, libArtSize: 'small', crateSort: 'custom', crateSubTracks: true, folderToCrates: true, crateCollapsed: [], deckLayout: 'auto', stemsDir: '', stemsModel: 'htdemucs', stemsAuto: true, stemsBackground: true, autoAnalyze: true,
+  protectLibrary: false, libCols: null, libColsSame: true, libColsByView: {}, libArtSize: 'small', crateSort: 'custom', crateSubTracks: true, libRail: 'auto', libHistOpen: false, folderToCrates: true, crateCollapsed: [], deckLayout: 'auto', stemsDir: '', stemsModel: 'htdemucs', stemsAuto: true, stemsBackground: true, autoAnalyze: true,
   expansions: { flip: false, fxPresets: false, laptop: false, video: false, dvs: false, pitchTime: false },
   ytApiKey: '', ytClientId: '', ytClientSecret: '', spotifyClientId: '',
   panels: { sampler: false }, midiMap: {}, libView: 'all', libSort: { field: null, dir: 1 }
@@ -1044,12 +1044,12 @@ class App extends Emitter {
         case 'Period': d1.autoLoop(); break;
         case 'KeyK': d1.bendDown(-1); break;
         case 'KeyL': d1.bendDown(1); break;
-        case 'ArrowUp': this.libraryUI.move(-1); break;
-        case 'ArrowDown': this.libraryUI.move(1); break;
-        case 'PageUp': this.libraryUI.move(-15); break;
-        case 'PageDown': this.libraryUI.move(15); break;
-        case 'ArrowLeft': if (e.shiftKey) this.loadSelected(this.layers[0]); else if (!this.libraryUI.sideKey(-1)) this.libraryUI.toggleFocus('side'); break;
-        case 'ArrowRight': if (e.shiftKey) this.loadSelected(this.layers[1]); else if (!this.libraryUI.sideKey(1)) this.libraryUI.toggleFocus('table'); break;
+        case 'ArrowUp': this.libraryUI.move(-1, false); break;
+        case 'ArrowDown': this.libraryUI.move(1, false); break;
+        case 'PageUp': this.libraryUI.move(-15, false); break;
+        case 'PageDown': this.libraryUI.move(15, false); break;
+        case 'ArrowLeft': if (e.shiftKey) this.loadSelected(this.layers[0]); else if (!this.libraryUI.sideKey(-1, false)) this.libraryUI.toggleFocus('side'); break;
+        case 'ArrowRight': if (e.shiftKey) this.loadSelected(this.layers[1]); else if (!this.libraryUI.sideKey(1, false)) this.libraryUI.toggleFocus('table'); break;
         case 'Tab': this.libraryUI.toggleFocus(); break;
         case 'F9': this.toggleRecord(); break;
         case 'F6': this.engine.setSplit(!this.engine.split); break;

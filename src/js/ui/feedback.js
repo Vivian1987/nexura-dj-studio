@@ -117,10 +117,10 @@ export class Feedback {
     const body = el('div', { class: 'form fb-form' },
       el('p', {}, `Gracias por probar la versión ${app.info.version} de Nexura DJ Studio.`),
       el('ul', { class: 'fb-list' },
-        el('li', {}, 'Arrastra música (MP3, WAV, FLAC…) a la biblioteca o pulsa «+ Carpeta».'),
+        el('li', {}, 'Arrastra música (MP3, WAV, FLAC…) a la biblioteca o pulsa «+ Añadir música» en la barra lateral.'),
         el('li', {}, 'Haz doble clic en una pista para cargarla en un deck.'),
         el('li', {}, 'Conecta tu controladora MIDI por USB; si no se reconoce sola, configúrala en Ajustes → MIDI con «Añadir controladora». También puedes usar teclado y ratón.'),
-        el('li', {}, 'Importa listas de YouTube con «+ Lista» en la barra lateral.')),
+        el('li', {}, 'Importa listas de YouTube o Spotify con «+ Importar» en LISTAS ONLINE de la barra lateral.')),
       el('p', { class: 'hint' }, 'Es una versión de prueba: puede haber errores. Con el botón «💬 SUGERENCIAS» de la barra superior puedes enviarnos cualquier problema o idea en un minuto.'));
     const r = await app.modal('Bienvenido a la beta', body, ['Enviar una sugerencia', 'Empezar']);
     app.setSetting('betaWelcomeSeen', app.info.version);

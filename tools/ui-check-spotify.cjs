@@ -89,14 +89,14 @@ app.whenReady().then(async () => {
     await js(win, MOCK(FIXTURE));
     const c = report.checks[tag] = {};
 
-    // 1) botón «+ Spotify» en la barra lateral
-    if (w < 760) await js(win, `document.querySelector('#app').classList.add('side-expanded'); true`);
-    c.boton = await js(win, `(() => { const b = document.querySelector('.lib-side .sp-side'); if (!b) return null; b.scrollIntoView({ block: 'center' }); const r = b.getBoundingClientRect(); return { texto: b.textContent, visible: r.width > 0 && r.height > 0 }; })()`);
+    // 1) «+ Importar» de LISTAS ONLINE en la barra lateral (menú → «Lista de Spotify…»)
+    if (w < 760) await js(win, `document.querySelector('#library').classList.add('tree-toggled'); true`);
+    c.boton = await js(win, `(() => { const b = document.querySelector('.lib-side [data-sec=online] .sec-btn'); if (!b) return null; b.scrollIntoView({ block: 'center' }); const r = b.getBoundingClientRect(); return { texto: b.textContent, visible: r.width > 0 && r.height > 0 }; })()`);
     await js(win, `document.querySelector('#library').scrollIntoView({ block: 'end' }); true`);
     if (full) await shot(win, `${tag}-01-barra-lateral`);
 
     // 2) pegar el enlace en el diálogo y leer la lista (página pública simulada)
-    await js(win, `document.querySelector('.lib-side .sp-side').click(); true`);
+    await js(win, `document.querySelector('.lib-side [data-sec=online] .sec-btn').click(); const it = [...document.querySelectorAll('.ctx.root .ctx-item')].find(x => x.textContent.startsWith('Lista de Spotify')); it.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true })); true`);
     await until(win, `document.querySelector('.sp-url')`);
     await js(win, `(() => { const i = document.querySelector('.sp-url'); i.value = ${JSON.stringify(LIST_URL)}; i.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true })); return true; })()`);
     await until(win, `document.querySelectorAll('.sp-row').length >= 16`);

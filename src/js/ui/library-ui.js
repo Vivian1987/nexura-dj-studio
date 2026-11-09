@@ -17,6 +17,45 @@ const ART_SIZES = { small: { row: 28, col: 30 }, medium: { row: 44, col: 46 } };
 // 1 h 05 min / 42 min
 const countLabel = (n) => n === 1 ? '1 pista' : `${n} pistas`;
 const fmtTotal = (s) => { const m = Math.round(s / 60); return m >= 60 ? `${Math.floor(m / 60)} h ${String(m % 60).padStart(2, '0')} min` : `${m} min`; };
+// minúsculas y sin acentos (buscador de la barra lateral)
+const fold = (s) => String(s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
+
+// Iconos de trazo (24×24) de la barra lateral; un color fijo por tipo
+const ICON = {
+  lib: 'M9 18V5l12-2v13 M9 18a3 3 0 1 1-6 0 3 3 0 0 1 6 0z M21 16a3 3 0 1 1-6 0 3 3 0 0 1 6 0z',
+  ai: 'M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8z',
+  prep: 'M9 6h11 M9 12h11 M9 18h11 M4 6h.01 M4 12h.01 M4 18h.01',
+  hist: 'M12 7v5l3 2 M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0z',
+  crate: 'M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z',
+  smart: 'M4 5h16l-6 7v6l-4 2v-8z',
+  yt: 'M3 7a3 3 0 0 1 3-3h12a3 3 0 0 1 3 3v10a3 3 0 0 1-3 3H6a3 3 0 0 1-3-3z M10 9l5 3-5 3z',
+  sp: 'M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0z M7.5 10c3-1 6.5-.7 9 .8 M8 13.2c2.4-.7 5-.4 7 .7 M8.6 16c1.8-.5 3.7-.3 5.3.5',
+  search: 'M11 18a7 7 0 1 1 0-14 7 7 0 0 1 0 14z M20 20l-4-4',
+  plus: 'M12 5v14 M5 12h14',
+  import: 'M12 4v11 M7 10l5 5 5-5 M5 20h14',
+  open: 'M6 9l6 6 6-6',
+  closed: 'M9 6l6 6-6 6',
+  rail: 'M4 5h16v14H4z M9 5v14'
+};
+const ICON_COLOR = { lib: '#e8f0ff', ai: '#c792ff', prep: '#4fd1e8', hist: '#9fb2d4', crate: '#f2b544', smart: '#3fd6a4', yt: '#ff5a5a', sp: '#3ddc84' };
+function icon(name, size = 18, color = null, width = 2, cls = 'ico') {
+  const NS = 'http://www.w3.org/2000/svg', s = document.createElementNS(NS, 'svg'), p = document.createElementNS(NS, 'path');
+  for (const [k, v] of Object.entries({ class: cls, width: size, height: size, viewBox: '0 0 24 24', fill: 'none', stroke: color || 'currentColor', 'stroke-width': width, 'stroke-linecap': 'round', 'stroke-linejoin': 'round', 'aria-hidden': 'true' })) s.setAttribute(k, v);
+  p.setAttribute('d', ICON[name] || '');
+  s.appendChild(p);
+  return s;
+}
+// Barra de iconos: las vistas (Todas, IA, Prepare) se abren; el resto salta a su sección del árbol
+const RAIL = [
+  { k: 'all', label: 'Todas', icon: 'lib', view: 'all', title: 'Todas las pistas' },
+  { k: 'ai', label: 'IA', icon: 'ai', view: 'ai:next', title: 'Siguiente pista (IA)' },
+  { k: 'prep', label: 'Prepare', icon: 'prep', view: 'prepare', title: 'Prepare' },
+  { k: 'crates', label: 'Crates', icon: 'crate', sec: 'crates', title: 'Ir a los crates' },
+  { k: 'smart', label: 'Smart', icon: 'smart', sec: 'smart', title: 'Ir a las smart crates' },
+  { k: 'yt', label: 'YouTube', icon: 'yt', sec: 'online', at: '.side-item.yt', title: 'Ir a los vídeos y listas de YouTube' },
+  { k: 'sp', label: 'Spotify', icon: 'sp', sec: 'online', at: '.side-item.spotify', title: 'Ir a las listas importadas de Spotify' },
+  { k: 'hist', label: 'Historial', icon: 'hist', sec: 'library', at: '[data-node="history"]', title: 'Ir al historial' }
+];
 
 export class LibraryUI {
   constructor(app, root) {
@@ -42,13 +81,47 @@ export class LibraryUI {
     app.on('settings', (k) => {
       if (k === 'protectLibrary') this.refreshLock();
       if (k === 'libColsSame' || k === 'libArtSize') this.relayout();
+      if (k === 'libRail') this.updateRail();
     });
+    // modo laptop (clase de body) → barra de iconos en «Automática»
+    new MutationObserver(() => this.updateRail()).observe(document.body, { attributes: true, attributeFilter: ['class'] });
     this.renderSide();
+    this.updateRail();
     this.relayout();
+    requestAnimationFrame(() => this.revealActive());
   }
 
   build() {
-    this.side = el('aside', { class: 'lib-side', tabindex: 0 });
+    this.sideCur = this.viewId;   // fila con el foco del teclado en la barra lateral
+    this.railSel = null;          // botón de la barra de iconos pulsado (hasta cambiar de vista)
+    this.treeQ = '';
+    this.side = el('nav', { class: 'lib-side', 'aria-label': 'Biblioteca' });
+    this.treeIn = el('input', { class: 'side-search', type: 'search', placeholder: 'Buscar crates y listas…', 'aria-label': 'Buscar crates y listas' });
+    this.treeIn.addEventListener('input', debounce(() => { this.treeQ = this.treeIn.value.trim(); this.renderSide(); }, 100));
+    this.treeIn.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') { e.stopPropagation(); if (this.treeIn.value) { this.treeIn.value = ''; this.treeQ = ''; this.renderSide(); } else this.treeIn.blur(); }
+      if (e.key === 'ArrowDown' || e.key === 'Enter') { e.preventDefault(); const f = this.tree.querySelector('.side-item'); if (f) { this.setSideCur(f); f.focus(); } }
+    });
+    this.railBtn = el('button', { class: 'side-rail-btn', type: 'button' }, icon('rail', 16));
+    this.railBtn.addEventListener('click', () => this.app.setSetting('libRail', this.railOn() ? 'off' : 'on'));
+    this.tree = el('div', { class: 'lib-tree' });
+    const addBtn = el('button', { class: 'side-btn', type: 'button', title: 'Añadir archivos o una carpeta de música (también puedes arrastrarlos a la biblioteca)' }, icon('plus', 14, null, 2.2), 'Añadir música');
+    addBtn.addEventListener('click', () => this.menuAt(addBtn, [
+      { label: 'Archivos…', fn: () => this.app.addFiles(false) },
+      { label: 'Carpeta…', fn: () => this.app.addFiles(true) }
+    ]));
+    const impBtn = el('button', { class: 'side-btn', type: 'button', title: 'Importar biblioteca de otro programa DJ: BPM, beatgrid, tonalidad, hot cues, loops y listas (colección XML o NML)' }, icon('import', 14, null, 2.2), 'Importar…');
+    impBtn.addEventListener('click', () => this.app.importLibrary());
+    this.side.append(
+      el('div', { class: 'side-head' }, el('label', { class: 'side-find' }, icon('search', 16), this.treeIn), this.railBtn),
+      this.tree,
+      el('div', { class: 'side-foot' }, addBtn, impBtn));
+    this.side.addEventListener('focusin', () => { this.focus = 'side'; this.root.classList.add('side-focus'); });
+    this.rail = el('nav', { class: 'lib-rail', 'aria-label': 'Secciones de la biblioteca' }, ...RAIL.map(r => {
+      const b = el('button', { class: 'rail-btn', type: 'button', title: r.title, 'aria-pressed': 'false', dataset: { k: r.k } }, icon(r.icon, 22, ICON_COLOR[r.icon]), el('span', {}, r.label));
+      b.addEventListener('click', () => this.railGo(r));
+      return b;
+    }));
     this.searchIn = el('input', { class: 'search', type: 'search', placeholder: 'Buscar (título, artista, BPM, tonalidad…) o pegar un enlace de YouTube o Spotify  ·  Ctrl+F' });
     this.searchIn.addEventListener('input', debounce(() => {
       const v = this.searchIn.value.trim();
@@ -68,18 +141,18 @@ export class LibraryUI {
     }, 120));
     this.searchIn.addEventListener('keydown', (e) => { if (e.key === 'Escape') { this.searchIn.value = ''; this.search = ''; this.refresh(); this.searchIn.blur(); } if (e.key === 'Enter') this.searchIn.blur(); });
     this.countEl = el('span', { class: 'count' });
+    this.viewIco = el('span', { class: 'view-ico' });
     this.viewTitle = el('span', { class: 'view-title' });
     this.aiMode = select(ENERGY_MODES, this.app.ai.mode, (v) => { this.app.ai.setMode(v); this.refresh(); });
     this.aiMode.classList.add('ai-mode');
     this.aiMode.title = 'Qué buscar respecto a la pista que suena';
-    this.sideToggle = btn('☰', { cls: 'small lib-side-toggle', title: 'Mostrar u ocultar navegación', onClick: () => document.querySelector('#app')?.classList.toggle('side-expanded') });
+    // ☰: pliega el árbol y deja solo la barra de iconos (en ≤ 760 px, al revés: muestra el árbol)
+    this.sideToggle = btn('☰', { cls: 'small lib-side-toggle', title: 'Mostrar u ocultar el árbol de la biblioteca', onClick: () => { this.root.classList.toggle('tree-toggled'); this.placeSideRs(); } });
+    this.sideToggle.setAttribute('aria-label', 'Mostrar u ocultar el árbol de la biblioteca');
     this.lockBtn = btn('🔓', { cls: 'small lib-lock', onClick: () => this.app.setSetting('protectLibrary', !this.app.settings.protectLibrary) });
     const toolbar = el('div', { class: 'lib-toolbar' },
       this.sideToggle,
-      this.viewTitle, this.aiMode, this.searchIn, this.countEl, this.lockBtn,
-      btn('+ Archivos', { cls: 'small', onClick: () => this.app.addFiles(false) }),
-      btn('+ Carpeta', { cls: 'small', onClick: () => this.app.addFiles(true) }),
-      btn('⇪ Importar', { cls: 'small', title: 'Importar biblioteca de otro programa DJ: BPM, beatgrid, tonalidad, hot cues, loops y listas (colección XML o NML)', onClick: () => this.app.importLibrary() }),
+      el('span', { class: 'view-head' }, this.viewIco, this.viewTitle), this.countEl, this.aiMode, this.searchIn, this.lockBtn,
       btn('✨ Pedir set', { cls: 'small ai-btn', title: 'Describe un set con tus palabras y la IA lo crea con tu música', onClick: () => this.app.aiPromptDialog() }),
       btn('Analizar', { cls: 'small', onClick: () => this.app.analyzeMany(this.rows.filter(t => t.source === 'local' && (!t.analyzed || t.sections === undefined))), title: 'Analiza BPM, tonalidad, forma de onda, estructura y energía de las pistas visibles que lo necesiten (respeta tus BPM corregidos)' }));
     this.head = el('div', { class: 'lib-head', style: { gridTemplateColumns: GRID }, title: 'Clic: ordenar · clic derecho: elegir columnas' });
@@ -90,15 +163,14 @@ export class LibraryUI {
     this.scroller.append(this.spacer, this.rowsEl);
     this.scroller.addEventListener('scroll', () => this.renderRows());
     this.scroller.addEventListener('focus', () => { this.focus = 'table'; this.root.classList.remove('side-focus'); });
-    this.side.addEventListener('focus', () => { this.focus = 'side'; this.root.classList.add('side-focus'); });
     this.empty = el('div', { class: 'lib-empty' });
     const main = el('div', { class: 'lib-main' }, toolbar, this.head, this.scroller, this.empty);
     // tirador para el ancho de la barra lateral
     this.sideRs = el('div', { class: 'lib-side-rs', title: 'Arrastra para cambiar el ancho · doble clic: ancho por defecto' });
-    this.root.append(this.side, main, this.sideRs);
+    this.root.append(this.rail, this.side, main, this.sideRs);
     this.bindSideResizer();
-    // al cambiar de tamaño de pantalla cambia cuántas columnas caben (--lib-max)
-    window.addEventListener('resize', () => { if (this.colMax() !== this._max) this.relayout(); else this.applyColWidths(); this.placeSideRs(); });
+    // al cambiar de tamaño de pantalla cambia cuántas columnas caben (--lib-max) y si se ve la barra de iconos
+    window.addEventListener('resize', () => { this.updateRail(); if (this.colMax() !== this._max) this.relayout(); else this.applyColWidths(); this.placeSideRs(); });
     // soltar archivos del sistema (las listas .m3u/.m3u8 se importan como crate)
     main.addEventListener('dragover', (e) => { if (e.dataTransfer.types.includes('Files')) { e.preventDefault(); main.classList.add('drop'); } });
     main.addEventListener('dragleave', () => main.classList.remove('drop'));
@@ -109,12 +181,16 @@ export class LibraryUI {
   }
 
   // ------------------------------------------------------------ barra lateral
+  // Fila del árbol: botón con triángulo (o hueco), icono del tipo, nombre y contador. «id» = vista que abre;
+  // sin id (opts.node) es un nodo que solo se pliega (Historial)
   sideItem(id, label, count, opts = {}) {
-    const it = el('div', { class: 'side-item' + (id === this.viewId ? ' on' : '') + (opts.cls ? ' ' + opts.cls : ''), dataset: { view: id }, title: opts.title || null },
-      opts.twisty || null,
-      el('span', { class: 'si-ico', style: opts.color ? { color: opts.color } : null }, opts.icon || '•'), el('span', { class: 'si-label' }, label), count != null ? el('span', { class: 'si-count' }, String(count)) : null);
-    if (opts.depth) it.style.setProperty('--depth', opts.depth);
-    it.addEventListener('click', () => this.setView(id));
+    const on = !!id && id === this.viewId;
+    const it = el('button', { type: 'button', tabindex: -1, class: 'side-item' + (on ? ' on' : '') + (opts.depth ? ' sub' : '') + (opts.cls ? ' ' + opts.cls : ''), dataset: id ? { view: id } : { node: opts.node }, title: opts.title || null, 'aria-current': on ? 'true' : null },
+      opts.twisty || el('span', { class: 'si-tw' }),
+      icon(opts.icon, 18, opts.color || ICON_COLOR[opts.icon], 2, 'si-ico'), el('span', { class: 'si-label' }, label), count != null ? el('span', { class: 'si-count' }, String(count)) : null);
+    it.style.setProperty('--depth', opts.depth || 0);
+    if (opts.expanded != null) it.setAttribute('aria-expanded', String(opts.expanded));
+    it.addEventListener('click', () => { this.setSideCur(it); if (opts.onClick) opts.onClick(); else this.setView(id); });
     if (opts.menu) it.addEventListener('contextmenu', (e) => { e.preventDefault(); this.app.contextMenu(e, typeof opts.menu === 'function' ? opts.menu() : opts.menu); });
     // crates: arrastrar una crate sobre otra la convierte en su subcrate; con el orden personalizado,
     // soltarla en el borde superior/inferior la coloca delante/detrás en ese nivel
@@ -150,7 +226,28 @@ export class LibraryUI {
     }
     return it;
   }
-  section(title, ...actions) { return el('div', { class: 'side-sec' }, el('span', {}, title), el('span', { class: 'sec-actions' }, ...actions)); }
+  // Grupo del árbol: cabecera (título y como mucho un botón) y sus filas
+  group(sec, title, action, rows, head = null) {
+    const h = head || el('div', { class: 'side-sec' });
+    h.append(el('span', { class: 'sec-title' }, title), action || '');
+    return el('div', { class: 'side-group', dataset: { sec } }, h, ...rows);
+  }
+  secBtn(label, aria, fn) {
+    const b = el('button', { class: 'sec-btn', type: 'button', 'aria-label': aria, title: aria }, icon('plus', 12, null, 2.4), label);
+    b.addEventListener('click', (e) => { e.stopPropagation(); fn(b); });
+    return b;
+  }
+  // Menú bajo un botón (los menús contextuales se colocan en la posición del ratón)
+  menuAt(b, items) { const r = b.getBoundingClientRect(); this.app.contextMenu({ clientX: r.left, clientY: r.bottom + 2 }, items); }
+  importMenu(b) {
+    this.menuAt(b, [
+      { label: 'Lista de YouTube…', fn: () => this.app.ytImportDialog() },
+      { label: 'Mis listas de YouTube…', fn: () => this.app.ytMyPlaylists() },
+      { label: 'Buscar en YouTube…', fn: () => this.app.ytSearchDialog() },
+      { label: 'Lista de Spotify…', fn: () => this.app.spotifyImportDialog() },
+      { label: 'Archivo M3U…', fn: () => this.app.importM3u() }
+    ]);
+  }
 
   // Soltar una crate: dentro de otra (subcrate) o delante/detrás de ella en su nivel
   dropCrate(id, target, z) {
@@ -249,26 +346,36 @@ export class LibraryUI {
     const ts = this.lib.crateTrackIds(c.id).map(i => this.lib.get(i)).filter(Boolean);
     return `${ts.length} pistas · ${fmtTotal(ts.reduce((s, t) => s + (t.duration || 0), 0))}`;
   }
-  crateSideItems() {
-    const L = this.lib;
-    return L.crateTree(this.app.settings.crateSort, this.collapsedCrates()).map(({ c, depth, hasKids, open }) => {
-      const { color, inherited } = effectiveColor(L.crates, c.id);
-      const twisty = el('span', { class: 'si-tw', title: hasKids ? (open ? 'Plegar' : 'Desplegar') : null }, hasKids ? (open ? '▾' : '▸') : '');
-      if (hasKids) twisty.addEventListener('click', (e) => { e.stopPropagation(); this.setCrateOpen(c.id, !open); });
-      const it = this.sideItem('crate:' + c.id, c.name, L.crateTrackIds(c.id).length, {
-        icon: color ? '●' : c.spotify ? '♪' : '▣', color, depth, twisty, crateId: c.id,
-        cls: 'crate' + (inherited ? ' inherit' : ''),
-        title: (depth ? this.crateLabel(c) + '\n' : '') + this.crateInfo(c), drop: (ids) => L.addToCrate(c.id, ids),
-        menu: () => this.crateMenu(c)
-      });
-      if (hasKids) it.dataset.kids = open ? 'open' : 'closed';
-      return it;
+  // Spotify: las listas importadas (crate en la raíz sin subcrates) van en LISTAS ONLINE, no en el árbol
+  isOnlineCrate(c) { return !!(c && c.spotify && !this.lib.crate(c.parent) && !this.lib.subcrateIds(c.id).length); }
+  crateItem({ c, depth, hasKids, open }) {
+    const L = this.lib, sp = this.isOnlineCrate(c);
+    const { color, inherited } = effectiveColor(L.crates, c.id);
+    const twisty = el('span', { class: 'si-tw', title: hasKids ? (open ? 'Plegar' : 'Desplegar') : null }, hasKids ? icon(open ? 'open' : 'closed', 14, null, 2.4) : null);
+    if (hasKids) twisty.addEventListener('click', (e) => { e.stopPropagation(); this.setCrateOpen(c.id, !open); });
+    const it = this.sideItem('crate:' + c.id, c.name, L.crateTrackIds(c.id).length, {
+      icon: sp || (c.spotify && !color) ? 'sp' : 'crate', color: sp ? null : color, depth, twisty, crateId: c.id, expanded: hasKids ? open : null,
+      cls: 'crate' + (sp ? ' spotify' : '') + (inherited ? ' inherit' : ''),
+      title: (depth ? this.crateLabel(c) + '\n' : '') + this.crateInfo(c), drop: (ids) => L.addToCrate(c.id, ids),
+      menu: () => this.crateMenu(c)
     });
+    if (hasKids) it.dataset.kids = open ? 'open' : 'closed';
+    return it;
   }
-  // Cabecera «CRATES»: soltar aquí una crate la devuelve a la raíz; soltar carpetas crea crates en la raíz
-  cratesSection(...actions) {
-    const sec = this.section('CRATES', ...actions);
-    sec.title = 'Suelta aquí una crate para devolverla a la raíz, o carpetas de música para crear crates con su estructura';
+  // Árbol de crates; con el buscador, las que coinciden y sus antepasados (desplegados)
+  crateSideItems(hit) {
+    const L = this.lib, sort = this.app.settings.crateSort;
+    if (!this.treeQ) return L.crateTree(sort, this.collapsedCrates()).filter(x => !this.isOnlineCrate(x.c)).map(x => this.crateItem(x));
+    const show = new Set();
+    for (const c of L.crates) if (!this.isOnlineCrate(c) && hit(c.name)) for (const p of cratePath(L.crates, c.id)) show.add(p.id);
+    const all = L.crateTree(sort, null).filter(x => show.has(x.c.id));
+    return all.map(x => { const kids = all.some(y => y.c.parent === x.c.id); return this.crateItem({ ...x, hasKids: kids, open: kids }); });
+  }
+  sortMenu() { return Object.entries(CRATE_SORTS).map(([k, v]) => ({ label: (this.app.settings.crateSort === k ? '✓ ' : ' ') + v, fn: () => this.setCrateSort(k) })); }
+  // Cabecera «CRATES»: soltar aquí una crate la devuelve a la raíz; soltar carpetas crea crates en la raíz.
+  // Clic derecho: orden de las crates, nueva crate e importar M3U
+  cratesHead() {
+    const sec = el('div', { class: 'side-sec', title: 'Suelta aquí una crate para devolverla a la raíz, o carpetas de música para crear crates con su estructura · clic derecho: ordenar crates' });
     sec.addEventListener('dragover', (e) => { if (e.dataTransfer.types.includes('text/nexura-crate') || e.dataTransfer.types.includes('Files')) { e.preventDefault(); sec.classList.add('drop'); } });
     sec.addEventListener('dragleave', () => sec.classList.remove('drop'));
     sec.addEventListener('drop', (e) => {
@@ -277,77 +384,170 @@ export class LibraryUI {
       if (id) { e.preventDefault(); this.lib.setCrateParent(id, null); }
       else if (e.dataTransfer.files.length) { e.preventDefault(); this.dropData(e.dataTransfer, { target: null }); }
     });
+    sec.addEventListener('contextmenu', (e) => {
+      e.preventDefault();
+      this.app.contextMenu(e, [
+        { label: 'Ordenar crates', sub: this.sortMenu() },
+        { label: 'Nueva crate…', fn: () => this.newCrate(null) },
+        { label: '⇩ Importar lista M3U como crate…', fn: () => this.app.importM3u() }
+      ]);
+    });
     return sec;
   }
-  // «Reiniciar pistas tocadas» (de la sesión mostrada o de todas)
-  resetPlayedMenu(e) {
+  // «Reiniciar pistas tocadas» (de la sesión mostrada o de todas): menú del nodo Historial
+  resetPlayedItems() {
     const L = this.lib, h = this.viewId.startsWith('history:') ? this.viewId.slice(8) : null;
-    const all = () => { L.resetPlayed(); this.app.toast('Marcas de pistas tocadas reiniciadas', 'ok'); };
-    if (!h) return all();
-    this.app.contextMenu(e, [
-      { label: 'Reiniciar las de la sesión mostrada', fn: () => { L.resetPlayed(h); this.app.toast('Marcas de la sesión reiniciadas', 'ok'); } },
-      { label: 'Reiniciar las de todas las sesiones', fn: all }
-    ]);
+    const all = { label: 'Reiniciar pistas tocadas (todas las sesiones)', fn: () => { L.resetPlayed(); this.app.toast('Marcas de pistas tocadas reiniciadas', 'ok'); } };
+    return h ? [{ label: 'Reiniciar las de la sesión mostrada', fn: () => { L.resetPlayed(h); this.app.toast('Marcas de la sesión reiniciadas', 'ok'); } }, all] : [all];
   }
+  setHistOpen(open) { this.app.setSetting('libHistOpen', !!open); this.renderSide(); }
+  sessionLabel(h) { return new Date(h.date).toLocaleDateString('es-ES', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' }); }
 
   renderSide() {
-    const L = this.lib, s = this.side;
-    s.innerHTML = '';
-    const local = [...L.tracks.values()].filter(t => t.source === 'local').length;
-    const yt = [...L.tracks.values()].filter(t => t.source === 'youtube').length;
+    const L = this.lib, t = this.tree, top = t.scrollTop, hadFocus = t.contains(document.activeElement);
+    const q = fold(this.treeQ), hit = (s) => !q || fold(s).includes(q);
+    let local = 0, yt = 0;
+    for (const x of L.tracks.values()) { if (x.source === 'local') local++; else if (x.source === 'youtube') yt++; }
     const libMenu = [
       { label: 'Relocalizar archivos perdidos…', fn: () => this.app.relocateMissing() },
       { label: 'Comprobar archivos perdidos', fn: () => this.checkAllMissing() }
     ];
-    s.append(
-      this.section('BIBLIOTECA'),
-      this.sideItem('all', 'Todas las pistas', local, { icon: '♫', menu: libMenu }),
-      this.sideItem('ai:next', 'Siguiente pista (IA)', null, { icon: '✨', cls: 'ai' }),
-      this.sideItem('prepare', 'Prepare', L.prepare.length, { icon: '⧉', drop: (ids) => L.addToPrepare(ids), menu: [{ label: 'Vaciar Prepare', fn: () => L.removeFromPrepare([...L.prepare]) }] }),
-      this.section('YOUTUBE'),
-      el('div', { class: 'side-actions' },
-        btn('+ Lista', { cls: 'micro', onClick: () => this.app.ytImportDialog(), title: 'Importar una lista de reproducción de YouTube' }),
-        btn('Mis listas', { cls: 'micro', onClick: () => this.app.ytMyPlaylists(), title: 'Listas de tu cuenta de Google' }),
-        btn('Buscar', { cls: 'micro', onClick: () => this.app.ytSearchDialog(), title: 'Buscar vídeos en YouTube' }),
-        btn('+ Spotify', { cls: 'micro sp-side', onClick: () => this.app.spotifyImportDialog(), title: 'Importar una lista de Spotify como crate (solo títulos y artistas): se buscan en tu música y, las que falten, en YouTube o para comprar' })),
-      this.sideItem('yt-all', 'Todos los vídeos', yt, { icon: '▶', cls: 'yt' }),
-      ...L.ytPlaylists.map(p => this.sideItem('yt:' + p.id, p.title, p.ids.length, {
-        icon: '▶', cls: 'yt',
+    // BIBLIOTECA: vistas fijas e Historial (plegable, con sus sesiones)
+    const lib = [];
+    if (hit('Todas las pistas')) lib.push(this.sideItem('all', 'Todas las pistas', local, { icon: 'lib', menu: libMenu }));
+    if (hit('Siguiente pista (IA)')) lib.push(this.sideItem('ai:next', 'Siguiente pista (IA)', null, { icon: 'ai', cls: 'ai' }));
+    if (hit('Prepare')) lib.push(this.sideItem('prepare', 'Prepare', L.prepare.length, { icon: 'prep', drop: (ids) => L.addToPrepare(ids), menu: [{ label: 'Vaciar Prepare', fn: () => L.removeFromPrepare([...L.prepare]) }] }));
+    const sessions = L.history.slice().reverse().slice(0, 30);
+    const shown = q && !hit('Historial') ? sessions.filter(h => hit(this.sessionLabel(h))) : sessions;
+    if (shown.length || hit('Historial')) {
+      const open = !!this.app.settings.libHistOpen || (!!q && shown.length > 0 && !hit('Historial'));
+      const twisty = el('span', { class: 'si-tw' }, sessions.length ? icon(open ? 'open' : 'closed', 14, null, 2.4) : null);
+      lib.push(this.sideItem(null, 'Historial', sessions.length, { node: 'history', icon: 'hist', cls: 'hist-node', twisty, expanded: sessions.length ? open : null, title: 'Sesiones anteriores · clic derecho: reiniciar pistas tocadas', onClick: () => this.setHistOpen(!this.app.settings.libHistOpen), menu: () => this.resetPlayedItems() }));
+      if (open) lib.push(...shown.map(h => this.sideItem('history:' + h.id, this.sessionLabel(h), h.entries.length, {
+        icon: 'hist', depth: 1,
         menu: [
-          { label: 'Actualizar desde YouTube', fn: () => this.app.ytImport(p.playlistId) },
-          { label: 'Eliminar lista', fn: () => { if (L.deleteYtPlaylist(p.id) && this.viewId === 'yt:' + p.id) this.setView('yt-all'); } }
+          { label: 'Reiniciar pistas tocadas de esta sesión', fn: () => { L.resetPlayed(h.id); this.app.toast('Marcas de la sesión reiniciadas', 'ok'); } },
+          { label: 'Exportar CSV', fn: () => this.app.exportHistory(h.id) }
         ]
-      })),
-      this.cratesSection(
-        btn('⇩M3U', { cls: 'micro', title: 'Importar una lista .m3u / .m3u8 como crate (también puedes arrastrar el archivo; soltada sobre una crate, se crea como subcrate)', onClick: () => this.app.importM3u() }),
-        btn('⇅', { cls: 'micro', title: 'Ordenar crates (dentro de cada nivel)', onClick: (e) => this.app.contextMenu(e, Object.entries(CRATE_SORTS).map(([k, v]) => ({ label: (this.app.settings.crateSort === k ? '✓ ' : ' ') + v, fn: () => this.setCrateSort(k) }))) }),
-        btn('+', { cls: 'micro', title: 'Nueva crate (para un subcrate: clic derecho en la crate → «Nuevo subcrate…» o arrastra una crate sobre otra)', onClick: () => this.newCrate(null) })),
-      ...this.crateSideItems(),
-      this.section('SMART CRATES', btn('+', { cls: 'micro', title: 'Nueva smart crate', onClick: () => this.smartEditor() })),
-      ...L.smart.map(sc => this.sideItem('smart:' + sc.id, sc.name, null, {
-        icon: '✦',
-        menu: [
-          { label: 'Editar reglas…', fn: () => this.smartEditor(sc) },
-          { label: 'Eliminar', fn: () => { if (L.deleteSmart(sc.id) && this.viewId === 'smart:' + sc.id) this.setView('all'); } }
-        ]
-      })),
-      this.section('HISTORIAL', btn('↺', { cls: 'micro', title: 'Reiniciar pistas tocadas (quita la marca ✓ de la sesión mostrada o de todas)', onClick: (e) => this.resetPlayedMenu(e) })),
-      ...L.history.slice().reverse().slice(0, 30).map(h => this.sideItem('history:' + h.id,
-        new Date(h.date).toLocaleDateString('es-ES', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' }), h.entries.length, {
-          icon: '◷',
-          menu: [
-            { label: 'Reiniciar pistas tocadas de esta sesión', fn: () => { L.resetPlayed(h.id); this.app.toast('Marcas de la sesión reiniciadas', 'ok'); } },
-            { label: 'Exportar CSV', fn: () => this.app.exportHistory(h.id) }
-          ]
-        })));
-    this.sideItems = [...s.querySelectorAll('.side-item')];
+      })));
+    }
+    const crates = this.crateSideItems(hit);
+    const smart = L.smart.filter(sc => hit(sc.name)).map(sc => this.sideItem('smart:' + sc.id, sc.name, L.view('smart:' + sc.id).length, {
+      icon: 'smart',
+      menu: [
+        { label: 'Editar reglas…', fn: () => this.smartEditor(sc) },
+        { label: 'Eliminar', fn: () => { if (L.deleteSmart(sc.id) && this.viewId === 'smart:' + sc.id) this.setView('all'); } }
+      ]
+    }));
+    // LISTAS ONLINE: YouTube (todos los vídeos y listas importadas) y listas importadas de Spotify
+    const online = [];
+    if (hit('YouTube · todos los vídeos')) online.push(this.sideItem('yt-all', 'YouTube · todos los vídeos', yt, { icon: 'yt', cls: 'yt' }));
+    online.push(...L.ytPlaylists.filter(p => hit(p.title)).map(p => this.sideItem('yt:' + p.id, p.title, p.ids.length, {
+      icon: 'yt', cls: 'yt', title: 'Lista de YouTube',
+      menu: [
+        { label: 'Actualizar desde YouTube', fn: () => this.app.ytImport(p.playlistId) },
+        { label: 'Eliminar lista', fn: () => { if (L.deleteYtPlaylist(p.id) && this.viewId === 'yt:' + p.id) this.setView('yt-all'); } }
+      ]
+    })));
+    online.push(...this.lib.sortedCrates(this.app.settings.crateSort).filter(c => this.isOnlineCrate(c) && hit(c.name)).map(c => this.crateItem({ c, depth: 0, hasKids: false, open: false })));
+    const groups = [
+      this.group('library', 'BIBLIOTECA', null, lib),
+      this.group('crates', 'CRATES', this.secBtn('Nuevo', 'Nuevo crate (para un subcrate: clic derecho en la crate → «Nuevo subcrate…» o arrastra una crate sobre otra)', () => this.newCrate(null)), crates, this.cratesHead()),
+      this.group('smart', 'SMART CRATES', this.secBtn('Nuevo', 'Nuevo smart crate', () => this.smartEditor()), smart),
+      this.group('online', 'LISTAS ONLINE', this.secBtn('Importar', 'Importar lista de YouTube, Spotify o M3U', (b) => this.importMenu(b)), online)
+    ];
+    // con el buscador se ocultan las secciones sin coincidencias
+    t.replaceChildren(...(q ? groups.filter(g => g.querySelector('.side-item')) : groups));
+    if (q && !t.firstChild) t.append(el('p', { class: 'side-none' }, `Nada coincide con «${this.treeQ}»`));
+    t.scrollTop = top;
+    this.sideItems = [...t.querySelectorAll('.side-item')];
+    this.setSideCur(this.sideCur);
+    // el foco del teclado sigue en la misma fila tras redibujar (plegar, contadores…)
+    if (hadFocus && !t.contains(document.activeElement)) this.curItem()?.focus({ preventScroll: true });
+  }
+
+  // --- foco del teclado en el árbol (una sola fila con tabindex=0)
+  keyOf(it) { return it.dataset.view || 'node:' + it.dataset.node; }
+  itemFor(key) {
+    if (!key) return null;
+    return this.tree.querySelector(key.startsWith('node:') ? `.side-item[data-node="${key.slice(5)}"]` : `.side-item[data-view="${CSS.escape(key)}"]`);
+  }
+  curItem() { return this.itemFor(this.sideCur) || this.tree.querySelector('.side-item.on') || this.tree.querySelector('.side-item'); }
+  setSideCur(x) {
+    if (x) this.sideCur = typeof x === 'string' ? x : this.keyOf(x);
+    const cur = this.curItem();
+    for (const it of this.sideItems || []) { it.tabIndex = it === cur ? 0 : -1; it.classList.toggle('cur', it === cur); }
+  }
+  // desplaza el árbol (solo el árbol) para que se vea la vista abierta
+  revealActive() {
+    const it = this.tree.querySelector('.side-item.on'), t = this.tree;
+    if (it && (it.offsetTop < t.scrollTop || it.offsetTop + it.offsetHeight > t.scrollTop + t.clientHeight)) t.scrollTop = it.offsetTop - (t.clientHeight - it.offsetHeight) / 2;
+  }
+  focusSideKey(key) { this.setSideCur(key); if (this.focus === 'side') this.curItem()?.focus({ preventScroll: true }); }
+
+  // --- barra de iconos
+  // Automática: en modo laptop o con la ventana de 1100 px o menos; Siempre / Nunca (Ajustes → Biblioteca)
+  railOn() {
+    const m = this.app.settings.libRail || 'auto';
+    return m === 'on' || (m === 'auto' && (document.body.classList.contains('laptop-mode') || window.innerWidth <= 1100));
+  }
+  updateRail() {
+    const on = this.railOn();
+    if (on !== this.root.classList.contains('rail-on')) { this.root.classList.toggle('rail-on', on); this.root.classList.remove('tree-toggled'); }
+    this.railBtn.classList.toggle('on', on);
+    this.railBtn.setAttribute('aria-pressed', String(on));
+    const lbl = on ? 'Ocultar la barra de iconos' : 'Mostrar la barra de iconos';
+    this.railBtn.setAttribute('aria-label', lbl); this.railBtn.title = lbl;
+    this.updateRailSel();
+    this.placeSideRs();
+  }
+  railKey(id = this.viewId) {
+    const [k, v] = id.split(':');
+    if (id === 'all' || id === 'everything') return 'all';
+    if (id === 'ai:next') return 'ai';
+    if (id === 'prepare') return 'prep';
+    if (k === 'crate') return this.isOnlineCrate(this.lib.crate(v)) ? 'sp' : 'crates';
+    if (k === 'smart') return 'smart';
+    if (k === 'yt' || id === 'yt-all') return 'yt';
+    if (k === 'history') return 'hist';
+    return null;
+  }
+  updateRailSel() {
+    const k = this.railSel || this.railKey();
+    for (const b of this.rail.children) { const on = b.dataset.k === k; b.classList.toggle('on', on); b.setAttribute('aria-pressed', String(on)); }
+  }
+  railGo(r) {
+    if (r.view) this.setView(r.view);
+    this.railSel = r.k;
+    // con el árbol plegado (☰) se vuelve a mostrar para ver la sección
+    if (!this.side.offsetWidth) { this.root.classList.toggle('tree-toggled'); this.placeSideRs(); }
+    if (this.treeQ && !this.tree.querySelector(`.side-group[data-sec="${r.sec || 'library'}"]`)) { this.treeIn.value = ''; this.treeQ = ''; this.renderSide(); }
+    if (r.k === 'hist' && !this.app.settings.libHistOpen && this.lib.history.length) this.setHistOpen(true);
+    this.updateRailSel();
+    const g = this.tree.querySelector(`.side-group[data-sec="${r.sec || 'library'}"]`);
+    if (!g) return;
+    const at = (r.at && this.tree.querySelector(r.at)) || (r.view && this.itemFor(r.view));
+    this.tree.scrollTop = Math.max(0, (at || g).offsetTop - (at ? 34 : 2));
+    for (const x of this.tree.querySelectorAll('.side-group.flash')) x.classList.remove('flash');
+    void g.offsetWidth; g.classList.add('flash');
+    clearTimeout(this._flashT); this._flashT = setTimeout(() => g.classList.remove('flash'), 1600);
+    if (at) this.setSideCur(at);
   }
 
   setView(id) {
     this.viewId = id;
+    this.sideCur = id;
+    this.railSel = null;
     this.app.setSetting('libView', id);
     this.sel.clear(); this.cursor = -1;
-    for (const it of this.side.querySelectorAll('.side-item')) it.classList.toggle('on', it.dataset.view === id);
+    for (const it of this.tree.querySelectorAll('.side-item')) {
+      const on = it.dataset.view === id;
+      it.classList.toggle('on', on);
+      if (on) it.setAttribute('aria-current', 'true'); else it.removeAttribute('aria-current');
+    }
+    this.setSideCur(id);
+    this.updateRailSel();
+    this.revealActive();
     // con columnas por crate, cada vista tiene las suyas
     if (this.app.settings.libColsSame === false) this.relayout(); else this.refresh();
     this.scroller.scrollTop = 0;
@@ -363,8 +563,19 @@ export class LibraryUI {
     if (k === 'crate') return this.crateLabel(L.crate(v)) || 'Crate';
     if (k === 'smart') return (L.smart.find(c => c.id === v) || {}).name || 'Smart crate';
     if (k === 'yt') return (L.ytPlaylists.find(c => c.id === v) || {}).title || 'Lista';
-    if (k === 'history') return 'Historial';
+    if (k === 'history') { const h = L.history.find(x => x.id === v); return h ? 'Historial › ' + this.sessionLabel(h) : 'Historial'; }
     return '';
+  }
+  // Icono y color de la vista (cabecera de la tabla)
+  viewIcon() {
+    const id = this.viewId, [k, v] = id.split(':');
+    if (k === 'crate') {
+      const c = this.lib.crate(v);
+      if (this.isOnlineCrate(c)) return { icon: 'sp', color: ICON_COLOR.sp };
+      return { icon: 'crate', color: (c && effectiveColor(this.lib.crates, c.id).color) || ICON_COLOR.crate };
+    }
+    const n = { all: 'lib', everything: 'lib', 'ai:next': 'ai', prepare: 'prep', 'yt-all': 'yt' }[id] || { smart: 'smart', yt: 'yt', history: 'hist' }[k] || 'lib';
+    return { icon: n, color: ICON_COLOR[n] };
   }
 
   // ------------------------------------------------------------ tabla
@@ -387,8 +598,9 @@ export class LibraryUI {
     // información de la vista: número de pistas y duración total
     const total = this.rows.reduce((s, t) => s + (t.duration || 0), 0);
     this.countEl.textContent = `${this.rows.length} pistas${total ? ' · ' + fmtTotal(total) : ''}`;
-    const name = this.viewName();
+    const name = this.viewName(), vi = this.viewIcon();
     this.viewTitle.textContent = name;
+    this.viewIco.replaceChildren(icon(vi.icon, 18, vi.color));
     this.searchIn.placeholder = this.viewId === 'all' || this.viewId === 'everything'
       ? 'Buscar (título, artista, BPM, tonalidad…) o pegar un enlace de YouTube o Spotify  ·  Ctrl+F'
       : `Buscar en «${name}» (título, artista, BPM, tonalidad…)  ·  Ctrl+F`;
@@ -402,10 +614,10 @@ export class LibraryUI {
     this.empty.style.display = empty ? 'flex' : 'none';
     if (empty) {
       this.empty.innerHTML = '';
-      if (this.viewId === 'all' && !this.search) this.empty.append(el('div', {}, el('h3', {}, 'Tu biblioteca está vacía'), el('p', {}, 'Arrastra aquí archivos o carpetas de música, o usa «+ Carpeta».')));
+      if (this.viewId === 'all' && !this.search) this.empty.append(el('div', {}, el('h3', {}, 'Tu biblioteca está vacía'), el('p', {}, 'Arrastra aquí archivos o carpetas de música, o usa «+ Añadir música» en la barra lateral.')));
       else if (this.viewId === 'ai:next' && !this.app.ai.refDeck()) this.empty.append(el('div', {}, el('h3', {}, '✨ Sugerencias de la IA'), el('p', {}, 'Carga una pista en un deck y aquí verás las que mejor mezclan con ella: tonalidad compatible, BPM cercano y energía.')));
       else if (this.viewId === 'ai:next') this.empty.append(el('p', {}, 'No hay pistas analizadas que encajen. Analiza tu biblioteca con «Analizar».'));
-      else if (this.viewId.startsWith('yt') && !this.search) this.empty.append(el('div', {}, el('h3', {}, 'Sin vídeos de YouTube'), el('p', {}, 'Pulsa «+ Lista» en la barra lateral y pega la URL de una lista de reproducción.')));
+      else if (this.viewId.startsWith('yt') && !this.search) this.empty.append(el('div', {}, el('h3', {}, 'Sin vídeos de YouTube'), el('p', {}, 'En la barra lateral, pulsa «+ Importar» en LISTAS ONLINE → «Lista de YouTube…» y pega la URL de una lista de reproducción.')));
       else this.empty.append(el('p', {}, 'No hay resultados.'));
     }
     if (resetScroll) this.scroller.scrollTop = 0;
@@ -670,13 +882,20 @@ export class LibraryUI {
   selected() { return this.rows.filter(t => this.sel.has(t.id)); }
   current() { return this.rows[this.cursor] || this.selected()[0] || null; }
 
-  // Navegación (teclado / encoder de la controladora)
-  move(delta) {
+  // Navegación (teclado / encoder de la controladora). En la barra lateral, «open» abre la vista al moverse
+  // (encoder MIDI, como hasta ahora); con el teclado (open = false) solo se mueve el foco e Intro la abre
+  move(delta, open = true) {
     if (this.focus === 'side') {
       const items = this.sideItems || [];
-      let i = items.findIndex(it => it.dataset.view === this.viewId);
+      const cur = this.curItem();
+      let i = items.indexOf(cur);
       i = Math.max(0, Math.min(items.length - 1, i + delta));
-      if (items[i]) { this.setView(items[i].dataset.view); items[i].scrollIntoView({ block: 'nearest' }); }
+      const it = items[i];
+      if (!it) return;
+      this.setSideCur(it);
+      it.focus({ preventScroll: true });
+      it.scrollIntoView({ block: 'nearest' });
+      if (open && it.dataset.view) this.setView(it.dataset.view);
       return;
     }
     if (!this.rows.length) return;
@@ -686,23 +905,33 @@ export class LibraryUI {
     if (top < st) this.scroller.scrollTop = top;
     else if (top + RH > st + h) this.scroller.scrollTop = top + RH - h;
   }
-  // ← / → (teclado o botones MIDI) con la barra lateral activa: ← pliega la crate abierta o sube a su
-  // crate padre; → despliega. Devuelve false si no hace nada (→ pasa entonces a la tabla).
-  sideKey(dir) {
+  // ← / → (teclado o botones MIDI) con la barra lateral activa, sobre la fila con el foco: ← pliega la crate
+  // (o el Historial) o sube a su padre; → despliega. Devuelve false si no hace nada (→ pasa entonces a la
+  // tabla). «open»: al subir al padre también lo abre (MIDI, como antes; el teclado solo mueve el foco)
+  sideKey(dir, open = true) {
     if (this.focus !== 'side') return false;
-    const c = this.viewId.startsWith('crate:') ? this.lib.crate(this.viewId.slice(6)) : null;
+    const it = this.curItem(), key = it ? this.keyOf(it) : this.viewId;
+    if (key === 'node:history') {
+      const o = !!this.app.settings.libHistOpen;
+      if (!this.lib.history.length || (dir > 0 ? o : !o)) return dir < 0;
+      this.setHistOpen(dir > 0);
+      return true;
+    }
+    if (key.startsWith('history:')) { if (dir > 0) return false; this.focusSideKey('node:history'); return true; }
+    const c = key.startsWith('crate:') ? this.lib.crate(key.slice(6)) : null;
     if (!c) return dir < 0;
-    const hasKids = this.lib.subcrateIds(c.id).length > 0, open = hasKids && !this.collapsedCrates().has(c.id);
-    if (dir > 0) { if (!hasKids || open) return false; this.setCrateOpen(c.id, true); return true; }
-    if (open) this.setCrateOpen(c.id, false);
-    else if (this.lib.crate(c.parent)) this.setView('crate:' + c.parent);
-    this.side.querySelector('.side-item.on')?.scrollIntoView({ block: 'nearest' });
+    const hasKids = this.lib.subcrateIds(c.id).length > 0, isOpen = hasKids && !this.collapsedCrates().has(c.id);
+    if (dir > 0) { if (!hasKids || isOpen) return false; this.setCrateOpen(c.id, true); return true; }
+    if (isOpen) this.setCrateOpen(c.id, false);
+    else if (this.lib.crate(c.parent)) { this.focusSideKey('crate:' + c.parent); if (open) this.setView('crate:' + c.parent); }
+    this.curItem()?.scrollIntoView({ block: 'nearest' });
     return true;
   }
   toggleFocus(to) {
     this.focus = to || (this.focus === 'side' ? 'table' : 'side');
     this.root.classList.toggle('side-focus', this.focus === 'side');
-    (this.focus === 'side' ? this.side : this.scroller).focus({ preventScroll: true });
+    if (this.focus === 'side') { const it = this.curItem(); if (it) { this.setSideCur(it); it.focus({ preventScroll: true }); } }
+    else this.scroller.focus({ preventScroll: true });
   }
 
   rowMenu(e) {

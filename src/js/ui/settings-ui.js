@@ -163,9 +163,10 @@ export class SettingsUI {
       this.row('Proteger biblioteca', this.toggle('protectLibrary'), 'No se pueden borrar ni renombrar pistas, crates ni smart crates, ni editar etiquetas, valoraciones, BPM o beatgrid, ni mover pistas entre crates. Sí se puede cargar, buscar, ordenar, analizar pistas nuevas y usar Prepare e Historial. También con el candado 🔒 de la biblioteca'),
       this.row('Mismas columnas en todos los crates', this.toggle('libColsSame'), 'Si lo desactivas, cada crate recuerda sus columnas (clic derecho en la cabecera de la tabla para elegirlas)'),
       this.row('Tamaño de la carátula', select({ small: 'Pequeña', medium: 'Mediana' }, s.libArtSize || 'small', (v) => app.setSetting('libArtSize', v)), 'La columna «Carátula» está oculta por defecto'),
+      this.row('Barra de iconos en la biblioteca', select({ auto: 'Automática', on: 'Siempre', off: 'Nunca' }, s.libRail || 'auto', (v) => app.setSetting('libRail', v)), 'Columna de iconos (Todas, IA, Prepare, Crates, Smart, YouTube, Spotify, Historial) junto al árbol. Automática: en modo laptop y con la ventana de 1100 px de ancho o menos. También con el botón pequeño junto al buscador de la barra lateral'),
       this.row('Orden de las crates', select({ custom: 'Personalizado (arrastrar)', alpha: 'Alfabético', created: 'Fecha de creación' }, s.crateSort || 'custom', (v) => { app.setSetting('crateSort', v); app.libraryUI.renderSide(); }), 'Se aplica dentro de cada nivel de subcrates'),
       this.row('Mostrar pistas de los subcrates en el crate padre', this.toggle('crateSubTracks'), 'Al abrir «Dance» se ven también las pistas de «Dance › 2024», «Dance › Tech House»… sin repetir. El contador y la búsqueda siguen la misma regla'),
-      this.row('Crear crates con la estructura de carpetas', this.toggle('folderToCrates'), '«+ Carpeta» crea una crate con el nombre de la carpeta (dentro de la crate abierta, si la hay) y un subcrate por cada subcarpeta con música. Soltar carpetas sobre una crate o sobre «CRATES» lo hace siempre'),
+      this.row('Crear crates con la estructura de carpetas', this.toggle('folderToCrates'), '«+ Añadir música» → «Carpeta…» crea una crate con el nombre de la carpeta (dentro de la crate abierta, si la hay) y un subcrate por cada subcarpeta con música. Soltar carpetas sobre una crate o sobre «CRATES» lo hace siempre'),
       this.row('Archivos perdidos', btn('Relocalizar archivos perdidos…', { cls: 'small', onClick: () => { app.closeModal(); app.relocateMissing(); } }), 'Busca en una carpeta las pistas que se han movido y conserva cues, beatgrid, valoración y crates'));
   }
 
@@ -411,7 +412,7 @@ export class SettingsUI {
     const rows = [
       ['Deck 1: Cue / Play / Sync / Loop', 'Z / X / C / V'], ['Deck 1: pitch bend − / +', 'A / S'], ['Deck 1: pads 1-8', '1 … 8 (Mayús = borrar)'],
       ['Deck 2: Cue / Play / Sync / Loop', 'N / M / , / .'], ['Deck 2: pitch bend − / +', 'K / L'], ['Deck 2: pads 1-8', 'Q W E R T Y U I (Mayús = borrar)'],
-      ['Navegar biblioteca', '↑ / ↓ / RePág / AvPág'],
+      ['Navegar biblioteca', '↑ / ↓ / RePág / AvPág'], ['Barra lateral: recorrer / abrir / plegar y desplegar', '↑ ↓ / Intro / ← →'],
       ['Quitar de la crate / de Prepare (en «Todas las pistas»: eliminar de la biblioteca)', 'Supr'], ['Eliminar de la biblioteca (desde cualquier vista)', 'Ctrl + Supr'], ['Cargar en deck 1 / 2', 'Mayús + ← / Mayús + →'], ['Cambiar panel', 'Tab / ← / →'],
       ['Buscar', 'Ctrl + F'], ['Grabar', 'F9'], ['Pantalla completa', 'F11'], ['Herramientas de desarrollo', 'F12'],
       ['Modo laptop', 'F8 (activar/desactivar)'], ['Automix IA', 'F7 (activar/desactivar)'], ['Autoplay del crate abierto', 'Mayús + F7 (empezar/parar)'], ['Autoplay: siguiente pista', 'Ctrl + →'], ['Split Cue', 'F6 (activar/desactivar)'],

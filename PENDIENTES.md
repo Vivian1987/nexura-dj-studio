@@ -1,6 +1,6 @@
 # Nexura DJ Studio — estado y pendientes
 
-Última actualización: 8 de noviembre de 2026 · versión **0.9.0-beta.6** (commit 826ed08 en `main`, instalador `dist/Nexura-DJ-Studio-0.9.0-beta.6.zip`).
+Última actualización: 9 de noviembre de 2026 · versión **0.9.0-beta.6** (commit 826ed08 en `main`, instalador `dist/Nexura-DJ-Studio-0.9.0-beta.6.zip`).
 
 ## Hecho en esta sesión (frente a Serato DJ Pro 5)
 - **Fase 1 — biblioteca:** importar M3U/M3U8, proteger biblioteca (candado), reiniciar pistas tocadas, columnas configurables (valoración, Explicit, carátula, año, energía, comentario), colores y orden de crates, buscar en crate, «mostrar en qué crates está», archivos perdidos y relocalizar, modo de pads Cue Loop, retorno del slip, altura mínima de la biblioteca (8 filas en 1496×885).
@@ -11,12 +11,14 @@
 - **Teclado:** Supr quita del crate/Prepare (o de la biblioteca con confirmación); Ctrl+Supr elimina de la biblioteca con confirmación.
 - **Autoplay** sobre un crate: en orden de la lista o aleatorio; transición seguida, fundido o sync; repetir y saltar tocadas; excluyente con Automix.
 - **Selección en ámbar** (variante «C · Ámbar» elegida en Claude Design).
+- **Barra lateral rediseñada** (Claude Design: A «Árbol claro» + C «Barra de iconos»), sin commit todavía: árbol único con BIBLIOTECA / CRATES / SMART CRATES / LISTAS ONLINE, buscador de crates y listas, iconos de color por tipo, un botón por sección, pie «+ Añadir música» / «Importar…», barra de iconos automática en modo laptop y ≤ 1100 px (Ajustes → Biblioteca: Automática / Siempre / Nunca), cabecera de la tabla con icono y ruta. Resumen en `.revision/RESUMEN-barra-lateral.md`.
 
 ## Por probar a mano (no se puede simular)
 - Arrastrar una carpeta real desde el Explorador de Windows sobre un crate.
 - Autoplay con una lista de YouTube.
 - Sonido real por la tarjeta/controladora; controladora MIDI física con el asistente.
 - Spotify con cuenta (requiere Premium; de momento no se usa).
+- Barra lateral nueva con la biblioteca real (cientos de crates): soltura del buscador, arrastrar pistas y crates con el ratón de verdad y lectura con un lector de pantalla.
 
 ## Pendiente
 - **Fase 3 — interfaz y actuación:** formas de onda en vertical; paneles Prepare/Historial en vertical; sampler con vista ampliada; Scratch Bank; micrófono con talkover; Ableton Link; Flip completo (ahora beta).

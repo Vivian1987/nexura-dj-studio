@@ -39,7 +39,7 @@ function seed() {
 const load = async (win) => { for (let i = 0; i < 4; i++) { try { await win.loadURL(URL); return; } catch (e) { await wait(800); } } throw new Error('no se pudo cargar ' + URL); };
 const js = (win, code) => win.webContents.executeJavaScript(code, true).catch(e => ({ error: String(e && e.message || e) }));
 async function shot(win, name) {
-  await js(win, "document.querySelector('#library').scrollIntoView({ block: 'end' }); { const s = document.querySelector('.lib-side'), h = document.querySelector('.side-sec[title*=\"raíz\"]'); s.scrollTop = h.offsetTop - s.offsetTop - 4; } true");
+  await js(win, "document.querySelector('#library').scrollIntoView({ block: 'end' }); { const s = document.querySelector('.lib-tree'), h = document.querySelector('.side-sec[title*=\"raíz\"]'); s.scrollTop = h.parentElement.offsetTop - 4; } true");
   win.webContents.invalidate();
   await wait(600);
   const img = await win.webContents.capturePage();
