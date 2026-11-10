@@ -1,6 +1,6 @@
 # Novedades de Nexura DJ Studio
 
-## 1.0.0-rc.3 · en preparación
+## 1.0.0-rc.3 · noviembre de 2026
 
 ### Y además
 - El aviso de nueva versión ya no pasa desapercibido: al abrir Nexura aparece una ventana ámbar abajo a la izquierda con la versión nueva y lo más destacado de sus novedades, y los botones **Descargar ahora** y **Más tarde** (late unos segundos al aparecer y luego se queda fija). Si eliges «Más tarde», no vuelve a salir hasta el siguiente arranque, y el botón **⬆ Actualizar** de la barra superior, junto a «?», sigue ahí. La descarga y el «listo para instalar» (en verde) se ven en la misma ventana.
