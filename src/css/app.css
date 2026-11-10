@@ -435,13 +435,58 @@ body:not([data-wave-layout="deck"]) .deck-clock { width: auto; height: auto; fle
 /* 10. Barra de estado ------------------------------------------------------ */
 #statusbar { display: flex; justify-content: space-between; align-items: center; font-size: 11px; color: var(--muted); padding: 0 8px; }
 #statusbar .brand { color: var(--dim); letter-spacing: .1em; font-weight: 700; font-size: 10px; }
-/* Aviso de actualización (updates-ui.js): discreto, a la derecha antes de la marca */
-.upd-ind { margin-left: auto; margin-right: 12px; display: inline-flex; align-items: center; gap: 4px; color: var(--text); white-space: nowrap; }
-.upd-ind.downloaded { color: var(--ok); }
-.upd-act { background: transparent; border: 0; padding: 0 2px; color: var(--accent); font: inherit; font-weight: 700; cursor: pointer; text-decoration: underline; text-underline-offset: 2px; }
-.upd-act:hover, .upd-act:focus-visible { color: #fff; outline: none; }
-.upd-bar { width: 80px; height: 4px; margin-left: 6px; border-radius: 2px; background: var(--panel2); overflow: hidden; }
-.upd-bar i { display: block; height: 100%; background: var(--accent); transition: width .3s; }
+/* Aviso de actualización (updates-ui.js): ventana de alerta ámbar fija abajo a la izquierda, encima de la barra
+   lateral de la biblioteca (lejos del crossfader, los FX y los decks), por debajo de los diálogos; verde cuando
+   está lista. Late los primeros 30 s (.pulse) y luego queda fija. Texto oscuro: 9,4:1 sobre el ámbar y 8:1 sobre
+   el verde. */
+.upd-ind { --upd-c: 255, 163, 26; position: fixed; left: 14px; bottom: 26px; z-index: 90; box-sizing: border-box; width: 360px; max-width: calc(100vw - 28px); max-height: calc(100vh - 60px); overflow: auto;
+  display: grid; grid-template-columns: 1fr auto; gap: 4px 8px; padding: 10px 10px 10px 12px; border-radius: 12px;
+  background: #ffa31a; border: 2px solid #ffa31a; color: #1a1000; font-size: 14px; font-weight: 700; line-height: 1.3; box-shadow: 0 10px 30px rgba(0, 0, 0, .6); }
+.upd-ind > :not(.upd-head):not(.upd-close) { grid-column: 1 / -1; }
+.upd-head { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.upd-title { font-size: 15px; font-weight: 800; min-width: 0; }
+.upd-ico { flex: none; display: grid; place-items: center; width: 28px; height: 28px; border-radius: 50%; background: #1a1000; color: #ffa31a; font-size: 15px; font-weight: 900; }
+.upd-ver { font-family: var(--mono); font-size: 13px; font-weight: 700; padding-left: 38px; }
+.upd-ver b { font-weight: 900; }
+.upd-notes { margin: 2px 0 0; padding: 0 0 0 54px; font-size: 13px; font-weight: 600; line-height: 1.35; }
+.upd-notes li { overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+.upd-sub { padding-left: 38px; font-size: 13px; font-weight: 600; }
+.upd-btns { display: flex; justify-content: flex-end; gap: 8px; margin-top: 2px; }
+.upd-act, .upd-later { flex: none; padding: 6px 14px; border-radius: 6px; font: inherit; font-size: 14px; font-weight: 800; cursor: pointer; }
+.upd-act { border: 0; background: #1a1000; color: #ffe2b0; }
+.upd-act:hover { background: #000; color: #fff; }
+.upd-later { border: 2px solid #1a1000; background: transparent; color: #1a1000; }
+.upd-later:hover { background: rgba(0, 0, 0, .14); }
+.upd-act:focus-visible, .upd-later:focus-visible, .upd-close:focus-visible { outline: 2px solid #1a1000; outline-offset: 2px; }
+.upd-close { align-self: start; width: 28px; height: 28px; padding: 0; border: 0; border-radius: 6px; background: transparent; color: inherit; font: inherit; font-size: 18px; line-height: 1; cursor: pointer; opacity: .75; }
+.upd-close:hover { opacity: 1; background: rgba(0, 0, 0, .14); }
+.upd-ind.downloading { background: var(--panel3); color: var(--sel-text); }
+.upd-ind.downloading .upd-ico { background: #ffa31a; color: #1a1000; }
+.upd-ind.downloading .upd-close:focus-visible { outline-color: #ffa31a; }
+.upd-ind.downloaded, .upd-ind.deferred { --upd-c: 63, 214, 164; background: #3fd6a4; border-color: #3fd6a4; color: #052a1d; }
+.upd-ind.downloaded .upd-ico, .upd-ind.deferred .upd-ico { background: #052a1d; color: #3fd6a4; }
+.upd-ind.downloaded .upd-act, .upd-ind.deferred .upd-act { background: #052a1d; color: #c9fbe8; }
+.upd-ind.downloaded .upd-later { border-color: #052a1d; color: #052a1d; }
+.upd-ind.downloaded .upd-act:focus-visible, .upd-ind.deferred .upd-act:focus-visible, .upd-ind.downloaded .upd-later:focus-visible, .upd-ind.downloaded .upd-close:focus-visible, .upd-ind.deferred .upd-close:focus-visible { outline-color: #052a1d; }
+/* sin sitio encima de la biblioteca aun sin novedades: más apretada y sin la línea de ayuda */
+.upd-ind.tight { gap: 2px 8px; padding: 6px 8px 6px 10px; }
+.upd-ind.tight .upd-sub { display: none; }
+.upd-ind.tight .upd-btns { margin-top: 0; }
+.upd-bar { display: block; height: 8px; margin-left: 38px; border-radius: 4px; background: rgba(255, 163, 26, .22); overflow: hidden; }
+.upd-bar i { display: block; height: 100%; background: #ffa31a; transition: width .3s; }
+.upd-ind.pulse, .btn.upd-top.pulse { animation: upd-pulse 2s ease-in-out infinite; }
+@keyframes upd-pulse {
+  0%, 100% { box-shadow: 0 8px 24px rgba(0, 0, 0, .55), 0 0 0 0 rgba(var(--upd-c), .75); filter: brightness(1); }
+  50% { box-shadow: 0 8px 24px rgba(0, 0, 0, .55), 0 0 0 10px rgba(var(--upd-c), 0); filter: brightness(1.12); }
+}
+/* Botón de la barra superior (junto a «?») mientras haya una actualización disponible, descargando o lista */
+.btn.upd-top { --upd-c: 255, 163, 26; background: #ffa31a; border-color: #ffa31a; color: #1a1000; font-weight: 800; }
+.btn.upd-top:hover { background: #ffb54a; }
+.btn.upd-top.downloading { background: var(--panel3); color: #ffd28a; }
+.btn.upd-top.downloaded, .btn.upd-top.deferred { --upd-c: 63, 214, 164; background: #3fd6a4; border-color: #3fd6a4; color: #052a1d; }
+.btn.upd-top:focus-visible { outline: 2px solid #fff4e0; outline-offset: 2px; }
+@media (prefers-reduced-motion: reduce) { .upd-ind.pulse, .btn.upd-top.pulse { animation: none; } }
+@media (max-width: 760px) { .upd-ind { left: 8px; right: 8px; bottom: 24px; width: auto; font-size: 13.5px; } }
 
 /* 11. Diálogos y menús ----------------------------------------------------- */
 .modal-ov { position: fixed; inset: 0; background: rgba(0, 0, 0, .6); display: grid; place-items: center; z-index: 100; backdrop-filter: blur(2px); }
@@ -626,6 +671,7 @@ kbd { font: 11px var(--mono); background: var(--panel3); border: 1px solid var(-
 
 /* 13. Avisos --------------------------------------------------------------- */
 #toasts { position: fixed; right: 16px; bottom: 32px; display: flex; flex-direction: column; gap: 6px; z-index: 300; pointer-events: none; }
+@media (max-width: 760px) { body:has(.upd-ind:not([hidden])) #toasts { bottom: 230px; } } /* encima del aviso de actualización (a lo ancho) */
 .toast { background: var(--panel3); border: 1px solid var(--line2); border-left: 3px solid var(--accent); padding: 9px 14px; border-radius: 6px; max-width: 440px; opacity: 0; transform: translateY(8px); transition: all .2s; box-shadow: 0 10px 30px rgba(0, 0, 0, .5); }
 .toast.show { opacity: 1; transform: none; }
 .toast.ok { border-left-color: var(--ok); }

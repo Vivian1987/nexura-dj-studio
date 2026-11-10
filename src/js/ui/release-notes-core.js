@@ -55,7 +55,7 @@ export function parseNotes(md) {
   return out;
 }
 
-// Las notas de una versión (o, si no están, las de la más reciente)
+// Las notas de una versión (o, si no están, las de la más reciente publicada: no las «en preparación»)
 export function notesFor(list, version) {
-  return list.find(n => n.version === version) || list[0] || null;
+  return list.find(n => n.version === version) || list.find(n => !/en preparación/i.test(n.title)) || list[0] || null;
 }

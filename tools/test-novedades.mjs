@@ -25,11 +25,18 @@ const md = fs.readFileSync(path.join(root, 'src', 'legal', 'NOVEDADES.md'), 'utf
 const pkg = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'));
 const list = parseNotes(md);
 const cur = notesFor(list, pkg.version);
-ok(list.length >= 2 && list[0].version === pkg.version, `NOVEDADES.md empieza por la versión del package.json (${pkg.version})`, list.map(n => n.version));
+// Delante puede ir la próxima versión «en preparación» (posterior a la del package.json); al publicarla se le
+// quita esa marca y entonces tiene que coincidir con el package.json
+const head = list.filter(n => !/en preparación/i.test(n.title));
+const draft = list.slice(0, list.indexOf(head[0]));
+ok(head.length >= 2 && head[0].version === pkg.version && draft.every(n => compareVersions(n.version, pkg.version) > 0),
+  `NOVEDADES.md empieza por la versión del package.json (${pkg.version}), o por una posterior «en preparación»`, list.map(n => n.title));
 ok(cur && cur.version === pkg.version && cur.blocks.some(b => b.type === 'h') && cur.blocks.filter(b => b.type === 'ul').reduce((n, b) => n + b.items.length, 0) >= 8, 'notas de la versión con apartados y puntos', cur && cur.blocks.length);
 const text = JSON.stringify(cur);
 ok(/YouTube/.test(text) && /Comprobar clave/.test(text) && /AIza/.test(text) && /30 búsquedas/.test(text) && /barra de progreso/.test(text), 'cuentan la búsqueda, las claves y la barra de YouTube');
-ok(notesFor(list, '9.9.9') === list[0], 'versión sin notas → las más recientes');
+ok(notesFor(list, '9.9.9') === head[0], 'versión sin notas → las más recientes publicadas (no las «en preparación»)');
+const dl = parseNotes('## 2.0.0 · en preparación\n- b\n## 1.0.0 · x\n- a');
+ok(notesFor(dl, 'web').version === '1.0.0' && notesFor(dl, '2.0.0').version === '2.0.0', 'la sección «en preparación» solo se muestra a su propia versión');
 const p = parseNotes('## 2.0.0 · x\n### A\n- uno\n- dos\ntexto\n- tres');
 ok(p[0].version === '2.0.0' && p[0].blocks.map(b => b.type).join() === 'h,ul,p,ul' && p[0].blocks[1].items.length === 2, 'formato: apartados, listas y párrafos', p[0].blocks);
 

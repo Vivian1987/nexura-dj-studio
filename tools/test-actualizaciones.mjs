@@ -3,7 +3,7 @@
 import { createRequire } from 'module';
 import { EventEmitter } from 'events';
 const require = createRequire(import.meta.url);
-const { createUpdater, EVERY } = require('../main/updater.js');
+const { createUpdater, notesText, EVERY } = require('../main/updater.js');
 
 let pass = 0, fail = 0;
 const ok = (c, msg) => { if (c) { pass++; console.log('  ✓', msg); } else { fail++; console.log('  ✗', msg); } };
@@ -82,6 +82,14 @@ ok(s.backups.length === 1, 'no repite la copia al instalar');
 // el reinicio va en un temporizador (para que la interfaz termine de guardar)
 s.timers.at(-1).fn();
 ok(s.au.calls.quit === 1, '«Reiniciar para actualizar» instala');
+
+console.log('Novedades en el aviso');
+s = setup({ version: '1.0.2', releaseNotes: '<h2>Novedades</h2><ul><li><strong>Aviso</strong> abajo a la izquierda</li><li>Arreglos &amp; mejoras</li><li>Tres</li><li>Cuatro</li></ul>' });
+s.up.configure({ auto: true });
+await s.timers[0].fn(); await tick();
+ok(JSON.stringify(s.events.at(-1).notes) === JSON.stringify(['Aviso abajo a la izquierda', 'Arreglos & mejoras', 'Tres']), 'notas HTML de la release → 3 líneas de texto plano');
+ok(JSON.stringify(notesText('## 1.0.2\n- **Uno**\n- Dos')) === JSON.stringify(['1.0.2', 'Uno', 'Dos']), 'Markdown → texto sin marcas');
+ok(notesText(null).length === 0 && notesText([{ version: '1', note: '<p>A</p>' }])[0] === 'A' && notesText('x'.repeat(300))[0].length === 140, 'sin notas → []; lista de versiones; líneas largas recortadas');
 
 console.log('Canal de versiones de prueba');
 s = setup('none');
