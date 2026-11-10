@@ -1011,11 +1011,26 @@ class App extends Emitter {
       const tag = (e.target.tagName || '').toLowerCase();
       if (tag === 'input' || tag === 'textarea' || tag === 'select' || this._modal) return;
       if ((e.ctrlKey || e.metaKey) && e.code === 'KeyF') { e.preventDefault(); this.libraryUI.searchIn.focus(); return; }
-      // Supr = quitar de la vista (crate, Prepare) o de la biblioteca; Ctrl+Supr = eliminar de la biblioteca.
-      // Solo con el foco en la tabla (los campos de texto ya han salido arriba)
-      if (e.key === 'Delete' && !e.altKey && !e.shiftKey && this.libraryUI.tableFocused()) {
+      // Supr = quitar de la vista (crate, Prepare) o de la biblioteca, con el foco en la tabla;
+      // Ctrl+Supr = eliminar de la biblioteca al instante (sin confirmar), con pistas seleccionadas y el foco
+      // en cualquier parte de la biblioteca (los campos de texto y los diálogos ya han salido arriba)
+      const hard = e.ctrlKey || e.metaKey;
+      // con el foco en una lista de YouTube de la barra lateral (o en «todos los vídeos»), Supr / Ctrl+Supr
+      // la borra (con confirmación) en lugar de actuar sobre las pistas seleccionadas
+      if (e.key === 'Delete' && !e.altKey && !e.shiftKey && this.libraryUI.sideDeleteTarget()) {
         e.preventDefault();
-        if (!e.repeat) { this.closeMenus(); this.libraryUI.deleteKey(e.ctrlKey || e.metaKey); }
+        if (!e.repeat) { this.closeMenus(); this.libraryUI.sideDeleteKey(); }
+        return;
+      }
+      if (e.key === 'Delete' && !e.altKey && !e.shiftKey && (hard ? this.libraryUI.hardDeleteReady() : this.libraryUI.tableFocused())) {
+        e.preventDefault();
+        if (!e.repeat) { this.closeMenus(); this.libraryUI.deleteKey(hard); }
+        return;
+      }
+      // Ctrl+Z = deshacer lo último que se ha quitado con Supr / Ctrl+Supr
+      if (hard && e.code === 'KeyZ' && !e.altKey && !e.shiftKey) {
+        e.preventDefault();
+        if (!e.repeat) this.libraryUI.undoLast();
         return;
       }
       // Ctrl+→ = Autoplay: siguiente pista

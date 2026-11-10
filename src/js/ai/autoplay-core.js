@@ -33,7 +33,7 @@ export function shuffle(list, rng = Math.random) {
 }
 
 export class AutoplayQueue {
-  // ids: orden de la tabla. opts: { order, repeat, startId, skip (ids a saltar), rng }
+  // ids: orden de la tabla. opts: { order, repeat, startId, currentId (la que ya suena), skip (ids a saltar), rng }
   constructor(ids, opts = {}) {
     this.ids = [...new Set((ids || []).filter(Boolean))];
     this.order = opts.order === 'shuffle' ? 'shuffle' : 'list';
@@ -47,6 +47,13 @@ export class AutoplayQueue {
     // «En orden»: empieza por la pista elegida (la seleccionada en la tabla) si está en la lista
     const k = this.order === 'list' && opts.startId != null ? this.seq.indexOf(opts.startId) : -1;
     this.pos = k > 0 ? k - 1 : -1;
+    // Ya suena una pista de la lista (currentId): cuenta como la actual y la cola sigue DESPUÉS de ella
+    // (en orden: la siguiente de la tabla; aleatorio: se pone la primera de la vuelta y no se repite)
+    const c = opts.currentId != null ? this.seq.indexOf(opts.currentId) : -1;
+    if (c >= 0) {
+      if (this.order === 'shuffle') { [this.seq[0], this.seq[c]] = [this.seq[c], this.seq[0]]; this.pos = 0; }
+      else this.pos = c;
+    }
   }
   get total() { return this.seq.length; }
   // posición (1…total) de la pista actual en la vuelta actual; 0 antes de empezar
@@ -109,6 +116,7 @@ export function fadeLevels(p) {
 }
 
 // Texto del indicador: «AUTOPLAY · Dance › Años 80 · 3/120 · siguiente: Artista – Título»
+// (index 0 = suena una pista que no es de la lista, la que ya sonaba al empezar: «–/120»)
 export function autoplayLabel({ source = '', index = 0, total = 0, next = '' } = {}) {
-  return ['AUTOPLAY', source, total ? `${index}/${total}` : '', next ? 'siguiente: ' + next : ''].filter(Boolean).join(' · ');
+  return ['AUTOPLAY', source, total ? `${index || '–'}/${total}` : '', next ? 'siguiente: ' + next : ''].filter(Boolean).join(' · ');
 }

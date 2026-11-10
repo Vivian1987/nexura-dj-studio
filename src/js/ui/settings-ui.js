@@ -413,7 +413,7 @@ export class SettingsUI {
       ['Deck 1: Cue / Play / Sync / Loop', 'Z / X / C / V'], ['Deck 1: pitch bend − / +', 'A / S'], ['Deck 1: pads 1-8', '1 … 8 (Mayús = borrar)'],
       ['Deck 2: Cue / Play / Sync / Loop', 'N / M / , / .'], ['Deck 2: pitch bend − / +', 'K / L'], ['Deck 2: pads 1-8', 'Q W E R T Y U I (Mayús = borrar)'],
       ['Navegar biblioteca', '↑ / ↓ / RePág / AvPág'], ['Barra lateral: recorrer / abrir / plegar y desplegar', '↑ ↓ / Intro / ← →'],
-      ['Quitar de la crate / de Prepare (en «Todas las pistas»: eliminar de la biblioteca)', 'Supr'], ['Eliminar de la biblioteca (desde cualquier vista)', 'Ctrl + Supr'], ['Cargar en deck 1 / 2', 'Mayús + ← / Mayús + →'], ['Cambiar panel', 'Tab / ← / →'],
+      ['Quitar de la crate / de Prepare (en «Todas las pistas»: eliminar de la biblioteca)', 'Supr'], ['Eliminar de la biblioteca al instante, sin preguntar (pistas seleccionadas, desde cualquier vista; los archivos no se borran)', 'Ctrl + Supr'], ['Eliminar la lista de YouTube con el foco en la barra lateral (en «YouTube · todos los vídeos»: quitar todos los vídeos; pide confirmación)', 'Supr'], ['Deshacer lo último quitado o eliminado', 'Ctrl + Z'], ['Cargar en deck 1 / 2', 'Mayús + ← / Mayús + →'], ['Cambiar panel', 'Tab / ← / →'],
       ['Buscar', 'Ctrl + F'], ['Grabar', 'F9'], ['Pantalla completa', 'F11'], ['Herramientas de desarrollo', 'F12'],
       ['Modo laptop', 'F8 (activar/desactivar)'], ['Automix IA', 'F7 (activar/desactivar)'], ['Autoplay del crate abierto', 'Mayús + F7 (empezar/parar)'], ['Autoplay: siguiente pista', 'Ctrl + →'], ['Split Cue', 'F6 (activar/desactivar)'],
       ['EQ kill', 'Clic derecho sobre HI/MID/LOW'], ['Ajuste fino de knobs/faders', 'Mayús + arrastrar'], ['Valor por defecto', 'Doble clic']

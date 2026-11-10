@@ -166,12 +166,37 @@ export class Library extends Emitter {
     return true;
   }
 
+  // Quita pistas de la biblioteca (los archivos no se tocan). Devuelve lo necesario para deshacer con
+  // restoreRemoved (las pistas con todos sus datos, su posición y la de cada crate/lista tocada) o false.
+  // El historial no se toca: sus entradas siguen apuntando al mismo id.
   remove(ids) {
     if (!this.guard('remove')) return false;
-    for (const id of ids) this.tracks.delete(id);
-    for (const c of this.crates) c.ids = c.ids.filter(i => !ids.includes(i));
-    this.prepare = this.prepare.filter(i => !ids.includes(i));
-    for (const p of this.ytPlaylists) p.ids = p.ids.filter(i => !ids.includes(i));
+    const drop = new Set(ids.filter(id => this.tracks.has(id)));
+    const undo = { order: [...this.tracks.keys()], tracks: [...drop].map(id => this.tracks.get(id)), crates: [], prepare: null, yt: [] };
+    for (const id of drop) this.tracks.delete(id);
+    for (const c of this.crates) if (c.ids.some(i => drop.has(i))) { undo.crates.push({ id: c.id, ids: c.ids.slice() }); c.ids = c.ids.filter(i => !drop.has(i)); }
+    if (this.prepare.some(i => drop.has(i))) { undo.prepare = this.prepare.slice(); this.prepare = this.prepare.filter(i => !drop.has(i)); }
+    for (const p of this.ytPlaylists) if (p.ids.some(i => drop.has(i))) { undo.yt.push({ id: p.id, ids: p.ids.slice() }); p.ids = p.ids.filter(i => !drop.has(i)); }
+    this._byPath = null;
+    this.saveSoon();
+    this.emit('change');
+    return undo;
+  }
+  // Deshacer remove: devuelve las pistas (mismo objeto: cues, beatgrid, valoración…) a su posición en la
+  // biblioteca, en las crates, en Prepare y en las listas de YouTube. Las añadidas mientras tanto se
+  // conservan (al final); una pista que se ha vuelto a añadir entretanto no se duplica.
+  restoreRemoved(undo) {
+    if (!undo || !undo.tracks || !undo.tracks.length || !this.guard('remove')) return false;
+    const back = new Map(undo.tracks.filter(t => !this.tracks.has(t.id)).map(t => [t.id, t]));
+    const map = new Map();
+    for (const id of undo.order) { const t = this.tracks.get(id) || back.get(id); if (t) map.set(id, t); }
+    for (const [id, t] of this.tracks) if (!map.has(id)) map.set(id, t);
+    this.tracks = map;
+    // contenido anterior de cada lista, sin las pistas que ya no existen; las añadidas después, al final
+    const merge = (old, cur) => { const keep = old.filter(i => this.tracks.has(i)), had = new Set(keep); return [...keep, ...cur.filter(i => !had.has(i))]; };
+    for (const u of undo.crates) { const c = this.crate(u.id); if (c) c.ids = merge(u.ids, c.ids); }
+    if (undo.prepare) this.prepare = merge(undo.prepare, this.prepare);
+    for (const u of undo.yt) { const p = this.ytPlaylists.find(x => x.id === u.id); if (p) p.ids = merge(u.ids, p.ids); }
     this._byPath = null;
     this.saveSoon();
     this.emit('change');
@@ -322,7 +347,49 @@ export class Library extends Emitter {
     this.saveSoon(); this.emit('change');
     return true;
   }
-  deleteYtPlaylist(id) { if (!this.guard('crate')) return false; this.ytPlaylists = this.ytPlaylists.filter(p => p.id !== id); this.saveSoon(); this.emit('change'); return true; }
+  // Borra la lista (no sus vídeos). Devuelve lo necesario para restoreYtPlaylist ({ list, index }) o false
+  deleteYtPlaylist(id) {
+    if (!this.guard('crate')) return false;
+    const index = this.ytPlaylists.findIndex(p => p.id === id);
+    if (index < 0) return false;
+    const list = this.ytPlaylists[index];
+    this.ytPlaylists = this.ytPlaylists.filter(p => p !== list);
+    this.saveSoon(); this.emit('change');
+    return { list: { ...list, ids: list.ids.slice() }, index };
+  }
+  restoreYtPlaylist(undo) {
+    if (!undo || !undo.list || !this.guard('crate') || this.ytPlaylists.some(p => p.id === undo.list.id)) return false;
+    const list = { ...undo.list, ids: undo.list.ids.filter(i => this.tracks.has(i)) };
+    this.ytPlaylists.splice(Math.min(undo.index, this.ytPlaylists.length), 0, list);
+    this.saveSoon(); this.emit('change');
+    return true;
+  }
+  // Todos los vídeos de YouTube de la biblioteca (vista «YouTube · todos los vídeos»)
+  ytTrackIds() { return [...this.tracks.values()].filter(t => t.source === 'youtube').map(t => t.id); }
+  // Vídeos de la lista que no están en otra lista de YouTube ni en ninguna crate
+  ytPlaylistOrphans(id) {
+    const p = this.ytPlaylists.find(x => x.id === id);
+    if (!p) return [];
+    const used = new Set();
+    for (const x of this.ytPlaylists) if (x !== p) for (const i of x.ids) used.add(i);
+    for (const c of this.crates) for (const i of c.ids) used.add(i);
+    return [...new Set(p.ids)].filter(i => !used.has(i) && this.tracks.get(i)?.source === 'youtube');
+  }
+  // Borra la lista y sus vídeos sin otro uso (ytPlaylistOrphans). Devuelve { list, removed } para
+  // restoreYtPlaylistWithVideos o false
+  deleteYtPlaylistWithVideos(id) {
+    if (!this.guard('crate') || !this.guard('remove')) return false;
+    const ids = this.ytPlaylistOrphans(id);
+    const list = this.deleteYtPlaylist(id);
+    if (!list) return false;
+    const removed = ids.length ? this.remove(ids) : null;
+    return { list, removed };
+  }
+  restoreYtPlaylistWithVideos(undo) {
+    if (!undo || !this.guard('crate') || !this.guard('remove')) return false;
+    if (undo.removed) this.restoreRemoved(undo.removed);   // primero los vídeos: la lista solo conserva los que existen
+    return this.restoreYtPlaylist(undo.list);
+  }
 
   // --- Smart crates
   saveSmart(sc) {

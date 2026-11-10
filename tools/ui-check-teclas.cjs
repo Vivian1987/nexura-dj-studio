@@ -119,11 +119,9 @@ app.whenReady().then(async () => {
     await key(win, 'Return');
     c.todasAceptar = Object.assign(await js(win, state), { focoTabla: await js(win, 'nexuraApp.libraryUI.tableFocused()') });
 
-    // 6) Ctrl+Supr desde una crate = eliminar de la biblioteca (con confirmación)
+    // 6) Ctrl+Supr desde una crate = eliminar de la biblioteca al instante (sin diálogo, aviso con Deshacer)
     await pick(win, 'crate:techno', ['t7']);
     await key(win, 'Delete', ['control']);
-    c.ctrlSuprDialogo = await js(win, state);
-    await key(win, 'Return');
     c.ctrlSuprAceptar = await js(win, state);
 
     // 7) vistas que no se editan: aviso y nada cambia
