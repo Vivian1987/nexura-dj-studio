@@ -90,7 +90,7 @@ export class Deck extends Emitter {
   // ---------------------------------------------------------------- posición
   get loaded() { return !!this.track; }
   get time() {
-    if (this.isYT) return this.yt ? this.yt.time() : 0;
+    if (this.isYT) { const t = this.yt ? this.yt.time() : 0; return this.duration ? Math.min(t, this.duration) : t; }
     const dt = (performance.now() - this.st.at) / 1000;
     return clamp(this.st.pos + this.st.sp * Math.min(dt, 0.05), 0, this.duration);
   }
@@ -144,11 +144,21 @@ export class Deck extends Emitter {
       this.yt.onError = (code) => this.app.toast(`YouTube no permite reproducir este vídeo fuera de su web (código ${code}).`, 'error');
     }
     this.emit('track', track); // muestra el contenedor del vídeo antes de crear el reproductor
+    // hasta que el reproductor conozca la duración se usa la de la lista (0 si se importó sin clave);
+    // `syncYTDuration` la corrige en cada frame en cuanto el vídeo la da
+    this.duration = track.duration || 0;
     await this.yt.load(track.ytId);
-    const d = this.yt.duration();
-    this.duration = d || track.duration || 0;
-    if (d && !track.duration) this.app.library.update(track.id, { duration: d });
+    this.syncYTDuration();
     this.afterLoad();
+  }
+  // Duración real del vídeo según el reproductor oficial; se guarda en la biblioteca si no la tenía
+  syncYTDuration() {
+    const d = this.yt ? this.yt.duration() : 0;
+    if (!(d > 1) || Math.abs(d - this.duration) < 0.25) return;
+    this.duration = d;
+    const t = this.track;
+    if (t && Math.abs((t.duration || 0) - d) > 1) this.app.library.update(t.id, { duration: d });
+    this.emit('duration');
   }
 
   afterLoad() {
@@ -900,6 +910,7 @@ export class Deck extends Emitter {
   // ---------------------------------------------------------------- por frame
   frame() {
     if (this.isYT && this.yt) {
+      this.syncYTDuration();
       this.yt.setVolume(this.engine.effectiveGain(this.idx));
       const p = this.yt.isPlaying();
       if (this.playing && !p && this.yt.state === 2) { this.playing = false; this.emit('state'); }

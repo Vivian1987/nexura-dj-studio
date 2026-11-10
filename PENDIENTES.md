@@ -1,6 +1,25 @@
 # Nexura DJ Studio — estado y pendientes
 
-Última actualización: 10 de noviembre de 2026 · rama `rc1-imprescindible` (desde la beta.8, sin commit) · versión **1.0.0-rc.1** en `package.json`. Resumen en `.revision/RESUMEN-rc1.md`.
+Última actualización: 10 de noviembre de 2026 · rama `yt-tiempo` (desde main, sin commit) · versión **1.0.0-rc.2** en `package.json`. Resúmenes en `.revision/RESUMEN-rc2.md` y `.revision/RESUMEN-rc1.md`.
+
+## 1.0.0-rc.2 — versión pequeña para probar las actualizaciones desde la rc1 (10 nov 2026, sin commit)
+- **Datos del responsable** en la licencia y la privacidad (Miguel Contreras Gallardo, NIF, domicilio en Getafe); la privacidad (v1.1) explica la búsqueda de YouTube sin clave.
+- **Clave de YouTube oculta** («AIza••••••••», 👁 5 s, también el Client secret) y **«Comprobar clave»** con el error en claro.
+- **Buscar en YouTube sin configurar nada** por un servicio de NexuraIA (n8n): 30 búsquedas/día por instalación, caché de 7 días, solo se envía `{id, q, max}`; la clave propia tiene prioridad. Mensaje claro al llegar al límite y, sin servicio ni clave, aviso con la guía del README (sección nueva «YouTube»).
+- **Novedades de la versión**: aviso «Nexura se ha actualizado a la X · Ver novedades» al arrancar tras actualizar (`src/legal/NOVEDADES.md`), también en «?» y Acerca de.
+- **n8n**: carpeta «Nexura DJ Studio» con tres flujos `[DEV]` desactivados (Buscar en YouTube, Informes y sugerencias, Estadísticas); copia en `tools/n8n/`.
+- Incluye el cambio anterior sin commit (tiempo y barra de progreso de YouTube).
+
+### Lo que tiene que hacer Miguel antes de publicar la rc2 (detalle en `.revision/RESUMEN-rc2.md`)
+- Crear en n8n la credencial «Query Auth» con la clave de YouTube de NexuraIA y elegirla en los dos nodos HTTP del flujo de búsqueda.
+- Probar y activar los tres flujos; poner sus URL de producción en `src/config/servicios.json` (`feedbackUrl`, `statsUrl`, `searchUrl`). Sin `searchUrl` la rc2 funciona igual que antes (búsqueda solo con clave propia), pero las novedades prometen las 30 búsquedas gratis.
+- Revisar con alguien de confianza la licencia y la privacidad con los datos ya puestos; publicar la privacidad en nexuraia.com.
+
+### Por probar a mano (rc2)
+- La actualización real rc1 → rc2: aviso en la barra de estado, descarga, reinicio y, al abrir, «Nexura se ha actualizado a la 1.0.0-rc.2 · Ver novedades».
+- Búsqueda real por el servicio (con el flujo activo): resultados, la 31.ª búsqueda del día → mensaje de límite, y la caché (repetir una búsqueda no gasta cuota de Google).
+- «Comprobar clave» con una clave real (correcta, mal copiada y con la API sin habilitar).
+- El resumen diario de estadísticas por correo a las 8:00.
 
 ## 1.0-rc1 — lo imprescindible para distribuirla gratis (10 nov 2026, sin commit)
 - **Actualizaciones automáticas** (electron-updater + GitHub Releases de `mcontrerasdevpro/nexura-dj-studio`): aviso en la barra de estado, descarga con progreso, «Reiniciar para actualizar» (con música sonando se instala al cerrar); Ajustes → General; canal de versiones de prueba opcional; sin red o sin releases, silencio. `npm run release` publica un borrador (necesita `GH_TOKEN`).
@@ -12,8 +31,8 @@
 - **Botón Ordenar crates** (⇅ junto a «+ Nuevo» en la cabecera CRATES): abre el menú de orden que antes solo estaba en el clic derecho y en Ajustes, con textos más claros («Como se crearon», «Por nombre (A → Z)», «Personalizado (arrastrar)») y ✓ en el actual; el tooltip dice el orden activo. La lógica de orden y el arrastre no cambian. Prueba: `npx electron tools/ui-check-orden-crates.cjs` (`.revision/orden-crates/`).
 
 ### Lo que tiene que hacer Miguel antes de distribuir la rc1
-- Completar en `src/legal/LICENCIA.txt` y `PRIVACIDAD.txt` el **[COMPLETAR: nombre o razón social, NIF y domicilio]** y que lo revise alguien de confianza en lo legal.
-- Rellenar `feedbackUrl` en `src/config/servicios.json` con el webhook (si no, se usa el de `config.local.json` como en la beta) y, cuando exista, `statsUrl`.
+- ~~Completar los datos del responsable en la licencia y la privacidad~~ (hecho en la rc2; falta que lo revise alguien de confianza en lo legal).
+- Rellenar `feedbackUrl` y `statsUrl` en `src/config/servicios.json` → ahora con los flujos de n8n de la rc2 (ver arriba).
 - `GH_TOKEN` para `npm run release`; publicar la privacidad en nexuraia.com (la pide la Store).
 - Partner Center (Microsoft Store): alta, reservar el nombre y copiar la identidad a `build/store-identidad.json`.
 
@@ -22,6 +41,12 @@
 - El instalador: que muestre la licencia con las tildes bien y que la actualización silenciosa no enseñe el mensaje de agradecimiento.
 - Restaurar una copia con la biblioteca real (miles de pistas) y el aviso de biblioteca dañada (por ejemplo, dejando `library.json` vacío).
 - El correo de respaldo del informe con el programa de correo que tengas (Outlook / Correo de Windows / ninguno).
+
+## Tiempo y barra de progreso en los vídeos de YouTube (10 nov 2026, rama `yt-tiempo`, sin commit)
+- Petición: «al reproducir la pista de YouTube las ondas no aparecen y tendría que haber un contador de tiempo».
+- **Causa:** la duración se leía una sola vez al cargar, cuando el reproductor todavía da 0, y los vídeos importados sin clave de API no traen duración → REMAIN en 0, vista general vacía y el Autoplay no fundía (paraba a los 5 s de acabar el vídeo).
+- **Hecho:** duración tomada del reproductor en cuanto la da (y guardada en la biblioteca); ELAPSED/REMAIN fluidos (también con tempo ≠ 1) y aviso de los últimos 30 s; en lugar de forma de onda, barra de progreso del color del deck con cursor, hot cues y clic para saltar (arriba, en el deck y en la vista general) con el texto «Vídeo de YouTube · sin forma de onda». El audio de YouTube sigue sin tocarse. Resumen en `.revision/RESUMEN-yt-tiempo.md`.
+- **Por probar a mano:** con vídeos reales (con y sin clave de API): que REMAIN aparezca en 1-2 s, que el clic en la barra salte bien y que el Autoplay funda al final de un vídeo de una lista.
 
 ## Hecho en esta sesión (frente a Serato DJ Pro 5)
 - **Fase 1 — biblioteca:** importar M3U/M3U8, proteger biblioteca (candado), reiniciar pistas tocadas, columnas configurables (valoración, Explicit, carátula, año, energía, comentario), colores y orden de crates, buscar en crate, «mostrar en qué crates está», archivos perdidos y relocalizar, modo de pads Cue Loop, retorno del slip, altura mínima de la biblioteca (8 filas en 1496×885).
@@ -48,7 +73,8 @@
 - Barra lateral nueva con la biblioteca real (cientos de crates): soltura del buscador, arrastrar pistas y crates con el ratón de verdad y lectura con un lector de pantalla.
 
 ## Pendiente
-- **Para la 1.0 final:** firma de código del instalador (SmartScreen), traducción al inglés si se distribuye fuera de España, página de descarga en nexuraia.com con la política de privacidad, y decidir qué hacer con «💬 SUGERENCIAS» (ahora duplica «? → Enviar informe o sugerencia»).
+- **Para la rc3:** traducción de la interfaz al **inglés** y **micrófono** con talkover.
+- **Para la 1.0 final:** firma de código del instalador (SmartScreen), página de descarga en nexuraia.com con la política de privacidad, y decidir qué hacer con «💬 SUGERENCIAS» (ahora duplica «? → Enviar informe o sugerencia»).
 - **Fase 3 — interfaz y actuación:** formas de onda en vertical; paneles Prepare/Historial en vertical; sampler con vista ampliada; Scratch Bank; micrófono con talkover; Ableton Link; Flip completo (ahora beta).
 - **Fase 4 — audio avanzado y expansiones:** keylock de alta calidad (nivel Pitch 'n Time); DVS (vinilos/CDJ de control); vídeo.
 - **Opcional:** «quitar de la lista» en listas de YouTube importadas; decidir si los FX se muestran siempre en pantallas de poca altura (ahora quedan tras ☰ con alto ≤ 900 px); más luminosidad en tonalidades azules/violetas de `keyColor`.

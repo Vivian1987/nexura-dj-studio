@@ -242,8 +242,8 @@ export class SpotifyImportUI {
   }
 
   async ytReady() {
-    if (await this.app.youtube.canUseApi()) return true;
-    this.setStatus('Buscar en YouTube necesita una clave de API de YouTube o tu cuenta de Google conectada (Ajustes → YouTube). Sin ella puedes pegar el enlace del vídeo con 🔗.');
+    if (await this.app.youtube.canSearch()) return true;
+    this.setStatus('Buscar en YouTube necesita una clave de API de YouTube o tu cuenta de Google conectada (Ajustes → YouTube; la guía del README explica cómo crear la clave). Sin ella puedes pegar el enlace del vídeo con 🔗.');
     return false;
   }
   async findYouTube(it) {

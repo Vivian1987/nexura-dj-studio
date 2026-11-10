@@ -38,6 +38,7 @@ import { Feedback } from './ui/feedback.js';
 import { UpdatesUI } from './ui/updates-ui.js';
 import { Welcome } from './ui/welcome.js';
 import { LegalUI } from './ui/legal-ui.js';
+import { ReleaseNotes } from './ui/release-notes.js';
 
 const DEFAULTS = {
   outputMode: 'auto', masterDevice: '', cueDevice: '', latency: 'normal',
@@ -78,6 +79,7 @@ class App extends Emitter {
     this.feedback = new Feedback(this);
     this.feedback.log('INFO', 'app', `Inicio de la interfaz · ${this.info.version} · ${navigator.language} · ${innerWidth}×${innerHeight} @${devicePixelRatio}`);
     this.legal = new LegalUI(this);
+    this.notes = new ReleaseNotes(this);
     this.welcome = new Welcome(this);
     document.title = 'Nexura DJ Studio' + (this.info.isBeta ? ` ${this.info.version}` : '');
 
@@ -136,7 +138,7 @@ class App extends Emitter {
     this.sampler.on('change', () => this.saveSamplerSoon());
 
     if (this.engine.ctx.state !== 'running') this.showStartOverlay();
-    setTimeout(() => { if (this.welcome.shouldShow()) this.welcome.open(); this.feedback.flushQueue(); }, 600);
+    setTimeout(() => { if (this.welcome.shouldShow()) this.welcome.open(); this.notes.check(); this.feedback.flushQueue(); }, 600);
     this.updatesUI = new UpdatesUI(this);
     this.statsTimer = setTimeout(() => this.sendStatsSoon(), 20000);
     requestAnimationFrame(() => this.frame());
@@ -223,7 +225,8 @@ class App extends Emitter {
     this.libraryUI = new LibraryUI(this, $('#library'));
     this.waves = this.decks.map((d, i) => new WaveDetail($('#wave' + i), d, this));
     this.decks.forEach((d, i) => d.on('track', async (t) => {
-      this.waves[i].setWave(t && !d.isYT ? await this.analyzer.getWave(t.id) : null);
+      const w = t && !d.isYT ? await this.analyzer.getWave(t.id) : null;
+      if (d.track === t) this.waves[i].setWave(w);
     }));
     this.settingsUI = new SettingsUI(this);
     // barra superior
@@ -261,6 +264,7 @@ class App extends Emitter {
     const r = this.helpBtn.getBoundingClientRect();
     this.contextMenu({ clientX: r.left, clientY: r.bottom + 4 }, [
       { label: 'Enviar informe o sugerencia…', fn: () => this.feedback.open() },
+      { label: 'Novedades de esta versión', fn: () => this.notes.show() },
       { label: 'Ver bienvenida', fn: () => this.welcome.open() },
       { label: 'Atajos de teclado', fn: () => this.settingsUI.open('keys') },
       { label: 'Copias de seguridad de la biblioteca', fn: () => this.settingsUI.open('library') },
@@ -962,21 +966,29 @@ class App extends Emitter {
     } catch (e) { toast(e.message, 'error', 7000); }
   }
   async ytSearchDialog() {
-    if (!(await this.youtube.canUseApi())) {
-      toast('La búsqueda necesita una clave de API de YouTube o tu cuenta conectada (Ajustes → YouTube).', 'warn', 6000);
+    const { MSG, GUIDE } = await platform.yt.texts();
+    const guide = { label: 'Ver la guía', fn: () => platform.openExternal(GUIDE) };
+    if (!(await this.youtube.canSearch())) {
+      toast(MSG.none, 'warn', 10000, guide);
       return this.settingsUI.open('youtube');
     }
     const q = await this.prompt('Buscar en YouTube', '', 'Artista, canción…');
     if (!q) return;
     try {
       const items = await this.youtube.search(q);
+      if (!items.length) return toast('YouTube no ha encontrado ningún vídeo para «' + q + '»', 'warn', 5000);
       const ids = this.library.addYouTubeItems(items, null);
       this.libraryUI.setView('yt-all');
       this.libraryUI.searchIn.value = '';
       this.libraryUI.search = '';
       this.libraryUI.refresh();
       toast(`${ids.length} resultados añadidos a YouTube`, 'ok');
-    } catch (e) { toast(e.message, 'error', 6000); }
+    } catch (e) {
+      // límite diario del servicio gratuito: aviso (no es un fallo) con acceso directo a Ajustes → YouTube
+      if (e.code === 'limit') toast(e.message, 'warn', 12000, { label: 'Poner mi clave', fn: () => this.settingsUI.open('youtube') });
+      else if (e.code === 'none') toast(e.message, 'warn', 10000, guide);
+      else toast(e.message, 'error', 8000);
+    }
   }
 
   // ------------------------------------------------------------------ Spotify (solo metadatos)

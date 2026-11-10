@@ -77,6 +77,18 @@ Funciona con **cualquier controladora MIDI**: un asistente aprende cada control 
 
 > **YouTube:** los vídeos se reproducen en su reproductor oficial dentro del deck. Sus condiciones no permiten procesar el audio, así que en esas pistas no hay EQ, efectos, scratch, loops ni stems.
 
+## YouTube
+
+- **Importar listas** públicas o no listadas: pega el enlace, sin configurar nada.
+- **Buscar vídeos:** funciona sin configurar nada con el servicio gratuito de NexuraIA (30 búsquedas al día por instalación). Si buscas mucho, pon tu propia clave de API, que es gratis:
+  1. Entra en [console.cloud.google.com](https://console.cloud.google.com/) con tu cuenta de Google y crea un proyecto (por ejemplo «Nexura DJ»).
+  2. **APIs y servicios → Biblioteca** → busca **YouTube Data API v3** → **Habilitar**.
+  3. **APIs y servicios → Credenciales → Crear credenciales → Clave de API**. En «Restricciones de API» elige solo *YouTube Data API v3* (deja «Restricciones de aplicación» en *Ninguna*).
+  4. Copia la clave (empieza por `AIza`) en **Ajustes → YouTube → Clave de API** y pulsa **Comprobar clave**.
+  
+  Con tu clave tienes unas 100 búsquedas al día (la cuota se renueva a las 9:00, hora de España) y la búsqueda va directamente a Google.
+- **Mis listas** (también las privadas): conecta tu cuenta de Google en Ajustes → YouTube con un cliente OAuth de tipo «Aplicación de escritorio».
+
 ## Controladoras
 
 Al conectar una controladora, Nexura la detecta sola. En **Ajustes → MIDI / Controladores**:
@@ -98,7 +110,7 @@ Las controladoras que solo funcionan por HID no son compatibles.
 
 ## Privacidad
 
-Tu música, tu biblioteca y los stems se quedan en tu ordenador. Solo se envía algo si tú lo eliges: un informe o sugerencia (con vista previa, sin rutas ni nombres de canciones) o las estadísticas anónimas de uso (desactivables en Ajustes). Detalles en [`PRIVACIDAD.txt`](src/legal/PRIVACIDAD.txt) y [`LICENCIA.txt`](src/legal/LICENCIA.txt).
+Tu música, tu biblioteca y los stems se quedan en tu ordenador. Solo se envía algo si tú lo eliges: un informe o sugerencia (con vista previa, sin rutas ni nombres de canciones) o las estadísticas anónimas de uso (desactivables en Ajustes). Si buscas en YouTube sin clave propia, el servicio de NexuraIA recibe solo el texto buscado y un identificador anónimo de la instalación (para el límite diario). Detalles en [`PRIVACIDAD.txt`](src/legal/PRIVACIDAD.txt) y [`LICENCIA.txt`](src/legal/LICENCIA.txt).
 
 ## Desarrollo
 

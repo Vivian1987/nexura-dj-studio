@@ -1,0 +1,30 @@
+# Novedades de Nexura DJ Studio
+
+## 1.0.0-rc.2 · noviembre de 2026
+
+### Buscar en YouTube sin configurar nada (muy pronto)
+- Nexura ya está preparada para buscar vídeos de YouTube sin crear ninguna clave, a través de un servicio gratuito de NexuraIA con **30 búsquedas al día**. Lo activaremos en una próxima actualización; mientras tanto, la búsqueda funciona con tu propia clave.
+- Solo se envía lo que buscas y un identificador anónimo de esta instalación (para contar las búsquedas del día). Nada de tu música ni de tus datos.
+- Si llegas al límite, te lo decimos claro: al día siguiente se renueva, o puedes poner tu propia clave.
+- Si tienes tu propia clave de YouTube (o tu cuenta de Google conectada), se sigue usando la tuya, como siempre.
+
+### Tus claves, más protegidas
+- En Ajustes → YouTube la clave ya no se ve entera: aparece como «AIza••••••••». Con el botón 👁 la ves unos segundos.
+- Lo mismo con el «Client secret» de la cuenta de Google.
+- Nuevo botón **Comprobar clave**: te dice si la clave funciona o qué le pasa (no es válida, se ha gastado la cuota del día o falta activar la API de YouTube).
+
+### Vídeos de YouTube con tiempo y barra de progreso
+- Los vídeos de YouTube muestran el tiempo transcurrido y el que queda, igual que tus pistas.
+- En lugar de la forma de onda aparece una barra de progreso con tus hot cues: haz clic en ella para saltar a ese punto.
+- Aviso de los últimos 30 segundos y fundidos del Autoplay en el momento justo también con vídeos.
+
+### Y además
+- Esta ventana: cuando Nexura se actualice, te lo contará al abrirla. También la tienes en el menú «?» → Novedades.
+- Textos legales completos con los datos del responsable, y la política de privacidad explica la búsqueda de YouTube.
+
+## 1.0.0-rc.1 · noviembre de 2026
+
+- Actualizaciones automáticas: aviso discreto en la barra de estado, descarga y «Reiniciar para actualizar» (con música sonando, se instala al cerrar).
+- Copias de seguridad diarias de la biblioteca y recuperación si se daña.
+- Enviar informes de errores y sugerencias desde la app, con vista previa de lo que se envía.
+- Estadísticas anónimas de uso opcionales, bienvenida en 4 pasos, menú de ayuda «?» y textos legales.

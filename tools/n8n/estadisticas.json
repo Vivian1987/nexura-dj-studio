@@ -1,0 +1,78 @@
+{
+  "name": "[DEV] Nexura DJ · Estadísticas",
+  "nodes": [
+    {
+      "id": "d3c00003-0000-4000-8000-000000000001",
+      "name": "Estadística recibida",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [0, 0],
+      "webhookId": "d3c00003-aaaa-4000-8000-00000000d001",
+      "notes": "La app envía como mucho una vez al día y solo si el usuario lo permite: { id, version, lang, os, decks, controller } (main/stats.js).",
+      "parameters": { "httpMethod": "POST", "path": "nexura-dj-estadisticas", "responseMode": "responseNode", "options": {} }
+    },
+    {
+      "id": "d3c00003-0000-4000-8000-000000000002",
+      "name": "Guardar registro del día",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [240, 0],
+      "notes": "Guarda { id, version, lang, os, decks, controller, fecha } por día en los datos estáticos del flujo (90 días de registros; los resúmenes, 2 años).",
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const b = $input.first().json.body || {};\nconst UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;\nif (!UUID.test(String(b.id || ''))) return [{ json: { ok: false } }];\n// Solo los campos permitidos, saneados (igual que main/stats.js)\nconst rec = {\n  id: String(b.id),\n  version: String(b.version || '').slice(0, 32),\n  lang: /^[a-z]{2,3}(-[A-Za-z]{2,4})?$/.test(String(b.lang || '')) ? String(b.lang) : 'und',\n  os: ['Windows 10', 'Windows 11'].includes(b.os) ? b.os : 'otro',\n  decks: Number(b.decks) === 4 ? 4 : 2,\n  controller: b.controller === true,\n  fecha: DateTime.now().setZone('Europe/Madrid').toISO()\n};\nconst day = DateTime.now().setZone('Europe/Madrid').toISODate();\nconst data = $getWorkflowStaticData('global');\ndata.days = data.days || {};\n(data.days[day] = data.days[day] || {})[rec.id] = rec;\n// limpieza: registros de más de 90 días\nconst limit = DateTime.now().setZone('Europe/Madrid').minus({ days: 90 }).toISODate();\nfor (const d of Object.keys(data.days)) if (d < limit) delete data.days[d];\nreturn [{ json: { ok: true } }];"
+      }
+    },
+    {
+      "id": "d3c00003-0000-4000-8000-000000000003",
+      "name": "Responder OK",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [480, 0],
+      "parameters": { "respondWith": "json", "responseBody": "={ \"ok\": true }", "options": {} }
+    },
+    {
+      "id": "d3c00003-0000-4000-8000-000000000004",
+      "name": "Cada día a las 8:00",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [0, 260],
+      "parameters": { "rule": { "interval": [{ "field": "days", "daysInterval": 1, "triggerAtHour": 8, "triggerAtMinute": 0 }] } }
+    },
+    {
+      "id": "d3c00003-0000-4000-8000-000000000005",
+      "name": "Resumen de ayer",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [240, 260],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const tz = 'Europe/Madrid';\nconst data = $getWorkflowStaticData('global');\ndata.days = data.days || {};\ndata.summaries = data.summaries || {};\nconst yday = DateTime.now().setZone(tz).minus({ days: 1 }).toISODate();\nconst recs = Object.values(data.days[yday] || {});\nconst count = (key) => recs.reduce((m, r) => { const k = String(r[key]); m[k] = (m[k] || 0) + 1; return m; }, {});\nconst uniq = (n) => { const s = new Set(); for (let i = 0; i < n; i++) { const d = DateTime.now().setZone(tz).minus({ days: 1 + i }).toISODate(); Object.keys(data.days[d] || {}).forEach(id => s.add(id)); } return s.size; };\nconst summary = {\n  fecha: yday,\n  activas: recs.length,\n  activas7dias: uniq(7),\n  activas30dias: uniq(30),\n  versiones: count('version'),\n  sistemas: count('os'),\n  idiomas: count('lang'),\n  decks: count('decks'),\n  conControladora: recs.filter(r => r.controller).length\n};\ndata.summaries[yday] = summary;\nconst limit = DateTime.now().setZone(tz).minus({ days: 730 }).toISODate();\nfor (const d of Object.keys(data.summaries)) if (d < limit) delete data.summaries[d];\nconst list = (o) => Object.entries(o).sort((a, b) => b[1] - a[1]).map(([k, v]) => `${k}: ${v}`).join(' · ') || '—';\nconst text = [\n  `Instalaciones activas el ${yday}: ${summary.activas}`,\n  `Últimos 7 días: ${summary.activas7dias} · últimos 30 días: ${summary.activas30dias}`,\n  `Versiones: ${list(summary.versiones)}`,\n  `Windows: ${list(summary.sistemas)}`,\n  `Idiomas: ${list(summary.idiomas)}`,\n  `Decks: ${list(summary.decks)}`,\n  `Con controladora MIDI: ${summary.conControladora} de ${summary.activas}`\n].join('\\n');\nreturn [{ json: { ...summary, text } }];"
+      }
+    },
+    {
+      "id": "d3c00003-0000-4000-8000-000000000006",
+      "name": "Enviar resumen",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2.1,
+      "position": [480, 260],
+      "webhookId": "d3c00003-bbbb-4000-8000-00000000d006",
+      "credentials": { "smtp": { "id": "kUGlVFdQbuiGqZiO", "name": "SMTP Hostinger · contacto" } },
+      "parameters": {
+        "fromEmail": "Nexura DJ Studio <contacto@nexuraia.com>",
+        "toEmail": "contacto@nexuraia.com",
+        "subject": "=Nexura DJ Studio · {{ $json.activas }} instalaciones activas el {{ $json.fecha }}",
+        "emailFormat": "text",
+        "text": "={{ $json.text }}",
+        "options": {}
+      }
+    }
+  ],
+  "connections": {
+    "Estadística recibida": { "main": [[{ "node": "Guardar registro del día", "type": "main", "index": 0 }]] },
+    "Guardar registro del día": { "main": [[{ "node": "Responder OK", "type": "main", "index": 0 }]] },
+    "Cada día a las 8:00": { "main": [[{ "node": "Resumen de ayer", "type": "main", "index": 0 }]] },
+    "Resumen de ayer": { "main": [[{ "node": "Enviar resumen", "type": "main", "index": 0 }]] }
+  },
+  "settings": { "executionOrder": "v1", "timezone": "Europe/Madrid", "saveDataSuccessExecution": "none", "saveDataErrorExecution": "all" }
+}

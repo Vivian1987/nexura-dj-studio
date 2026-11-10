@@ -1,0 +1,61 @@
+{
+  "name": "[DEV] Nexura DJ · Informes y sugerencias",
+  "nodes": [
+    {
+      "id": "c2b00002-0000-4000-8000-000000000001",
+      "name": "Informe recibido",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [0, 0],
+      "webhookId": "c2b00002-aaaa-4000-8000-00000000c001",
+      "notes": "La app envía (main/report.js → buildPayload): app, type (error|idea|other), category, subject, message, email/contact (opcional), version, date y, si se adjunta el registro, system, errors y technical.",
+      "parameters": { "httpMethod": "POST", "path": "nexura-dj-informes", "responseMode": "responseNode", "options": {} }
+    },
+    {
+      "id": "c2b00002-0000-4000-8000-000000000002",
+      "name": "Enviar correo a NexuraIA",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2.1,
+      "position": [260, 0],
+      "webhookId": "c2b00002-bbbb-4000-8000-00000000c002",
+      "onError": "continueErrorOutput",
+      "credentials": { "smtp": { "id": "kUGlVFdQbuiGqZiO", "name": "SMTP Hostinger · contacto" } },
+      "parameters": {
+        "fromEmail": "Nexura DJ Studio <contacto@nexuraia.com>",
+        "toEmail": "contacto@nexuraia.com",
+        "subject": "={{ String($json.body.subject || ('[Nexura DJ Studio ' + ($json.body.version || '') + '] ' + ($json.body.category || 'Informe'))).slice(0, 180) }}",
+        "html": "=<h2 style=\"font-family:sans-serif\">{{ ($json.body.category || 'Informe').replace(/</g, '&lt;') }}</h2>\n<p style=\"font-family:sans-serif;font-size:15px;white-space:pre-wrap\">{{ String($json.body.message || '').replace(/&/g, '&amp;').replace(/</g, '&lt;') }}</p>\n<table style=\"font-family:sans-serif;font-size:13px;border-collapse:collapse\">\n<tr><td style=\"padding:4px 10px\"><b>Tipo</b></td><td>{{ String($json.body.type || '').replace(/</g, '&lt;') }}</td></tr>\n<tr><td style=\"padding:4px 10px\"><b>Contacto</b></td><td>{{ String($json.body.email || $json.body.contact || '(no indicado)').replace(/</g, '&lt;') }}</td></tr>\n<tr><td style=\"padding:4px 10px\"><b>Versión</b></td><td>{{ String($json.body.version || '').replace(/</g, '&lt;') }}</td></tr>\n<tr><td style=\"padding:4px 10px\"><b>Fecha</b></td><td>{{ String($json.body.date || $now.toISO()).replace(/</g, '&lt;') }}</td></tr>\n</table>\n<h3 style=\"font-family:sans-serif\">Equipo</h3>\n<pre style=\"font-size:12px\">{{ String($json.body.system || '(no adjuntado)').replace(/&/g, '&amp;').replace(/</g, '&lt;') }}</pre>\n<h3 style=\"font-family:sans-serif\">Registro técnico (anonimizado en la app)</h3>\n<pre style=\"font-size:12px\">{{ String($json.body.errors || '(no adjuntado)').replace(/&/g, '&amp;').replace(/</g, '&lt;') }}</pre>",
+        "options": {
+          "replyTo": "={{ /^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$/.test($json.body.email || $json.body.contact || '') ? ($json.body.email || $json.body.contact) : 'contacto@nexuraia.com' }}"
+        }
+      }
+    },
+    {
+      "id": "c2b00002-0000-4000-8000-000000000003",
+      "name": "Responder OK",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [520, -80],
+      "parameters": { "respondWith": "json", "responseBody": "={ \"ok\": true }", "options": {} }
+    },
+    {
+      "id": "c2b00002-0000-4000-8000-000000000004",
+      "name": "Responder fallo (502)",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [520, 80],
+      "notes": "Con un error la app guarda el informe en un .txt y abre el correo (alternativa de main.js).",
+      "parameters": { "respondWith": "json", "responseBody": "={ \"ok\": false }", "options": { "responseCode": 502 } }
+    }
+  ],
+  "connections": {
+    "Informe recibido": { "main": [[{ "node": "Enviar correo a NexuraIA", "type": "main", "index": 0 }]] },
+    "Enviar correo a NexuraIA": {
+      "main": [
+        [{ "node": "Responder OK", "type": "main", "index": 0 }],
+        [{ "node": "Responder fallo (502)", "type": "main", "index": 0 }]
+      ]
+    }
+  },
+  "settings": { "executionOrder": "v1", "timezone": "Europe/Madrid", "saveDataSuccessExecution": "none", "saveDataErrorExecution": "all" }
+}
