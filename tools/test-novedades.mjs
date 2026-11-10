@@ -31,8 +31,10 @@ const head = list.filter(n => !/en preparación/i.test(n.title));
 const draft = list.slice(0, list.indexOf(head[0]));
 ok(head.length >= 2 && head[0].version === pkg.version && draft.every(n => compareVersions(n.version, pkg.version) > 0),
   `NOVEDADES.md empieza por la versión del package.json (${pkg.version}), o por una posterior «en preparación»`, list.map(n => n.title));
-ok(cur && cur.version === pkg.version && cur.blocks.some(b => b.type === 'h') && cur.blocks.filter(b => b.type === 'ul').reduce((n, b) => n + b.items.length, 0) >= 8, 'notas de la versión con apartados y puntos', cur && cur.blocks.length);
-const text = JSON.stringify(cur);
+ok(cur && cur.version === pkg.version && cur.blocks.some(b => b.type === 'ul'), 'notas de la versión actual con puntos', cur && cur.blocks.length);
+const rc2 = list.find(n => n.version === '1.0.0-rc.2');
+ok(rc2 && rc2.blocks.some(b => b.type === 'h') && rc2.blocks.filter(b => b.type === 'ul').reduce((n, b) => n + b.items.length, 0) >= 8, 'notas de la rc.2 con apartados y puntos', rc2 && rc2.blocks.length);
+const text = JSON.stringify(rc2);
 ok(/YouTube/.test(text) && /Comprobar clave/.test(text) && /AIza/.test(text) && /30 búsquedas/.test(text) && /barra de progreso/.test(text), 'cuentan la búsqueda, las claves y la barra de YouTube');
 ok(notesFor(list, '9.9.9') === head[0], 'versión sin notas → las más recientes publicadas (no las «en preparación»)');
 const dl = parseNotes('## 2.0.0 · en preparación\n- b\n## 1.0.0 · x\n- a');
