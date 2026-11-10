@@ -1,0 +1,158 @@
+{
+  "name": "[DEV] Nexura DJ · Buscar en YouTube",
+  "nodes": [
+    {
+      "id": "b1a00001-0000-4000-8000-000000000001",
+      "name": "Búsqueda recibida",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [0, 0],
+      "webhookId": "b1a00001-aaaa-4000-8000-00000000b001",
+      "parameters": { "httpMethod": "POST", "path": "nexura-dj-buscar", "responseMode": "responseNode", "options": {} }
+    },
+    {
+      "id": "b1a00001-0000-4000-8000-000000000002",
+      "name": "Límite y caché",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [240, 0],
+      "notes": "30 búsquedas al día por id de instalación (día de Madrid) y caché de 7 días por texto. Se guarda en los datos estáticos del flujo (solo en ejecuciones de producción, con el flujo activo).",
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// Entrada de la app: { id, q, max } (id = UUID anónimo de la instalación)\nconst body = $input.first().json.body || {};\nconst UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;\nconst id = String(body.id || '');\nconst q = String(body.q || '').trim().replace(/\\s+/g, ' ').slice(0, 200);\nconst max = Math.max(1, Math.min(50, Math.round(Number(body.max) || 25)));\nif (!UUID.test(id) || !q) return [{ json: { action: 'invalid' } }];\n\nconst LIMIT = 30;          // búsquedas al día por instalación\nconst CACHE_DAYS = 7;      // resultados guardados por texto\nconst CACHE_MAX = 3000;    // entradas como mucho\nconst data = $getWorkflowStaticData('global');\ndata.cache = data.cache || {};\ndata.counts = data.counts || {};\nconst now = Date.now();\nconst today = DateTime.now().setZone('Europe/Madrid').toISODate();\n\n// limpieza: contadores de otros días y caché caducada\nfor (const d of Object.keys(data.counts)) if (d !== today) delete data.counts[d];\nfor (const [k, v] of Object.entries(data.cache)) if (!v || now - v.t > CACHE_DAYS * 864e5) delete data.cache[k];\n\nconst day = data.counts[today] = data.counts[today] || {};\nconst used = day[id] || 0;\nif (used >= LIMIT) return [{ json: { action: 'limit', used } }];\nday[id] = used + 1;\n\nconst key = q.toLowerCase().normalize('NFD').replace(/[\\u0300-\\u036f]/g, '') + '|' + max;\nconst hit = data.cache[key];\nif (hit) return [{ json: { action: 'cache', items: hit.items, used: used + 1 } }];\nreturn [{ json: { action: 'search', q, max, key, used: used + 1, cacheMax: CACHE_MAX } }];"
+      }
+    },
+    {
+      "id": "b1a00001-0000-4000-8000-000000000003",
+      "name": "¿Qué hacer?",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.5,
+      "position": [480, 0],
+      "notes": "0 = buscar en YouTube · 1 = desde la caché · 2 = límite diario (429) · 3 = petición no válida (400)",
+      "parameters": {
+        "mode": "expression",
+        "numberOutputs": 4,
+        "output": "={{ Math.max(0, ['search', 'cache', 'limit', 'invalid'].indexOf($json.action)) }}"
+      }
+    },
+    {
+      "id": "b1a00001-0000-4000-8000-000000000004",
+      "name": "YouTube · buscar",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [720, -120],
+      "notes": "Credencial «Query Auth» con nombre del parámetro = key y valor = la clave de API de YouTube Data API v3 (la crea Miguel).",
+      "onError": "continueErrorOutput",
+      "parameters": {
+        "method": "GET",
+        "url": "https://www.googleapis.com/youtube/v3/search",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpQueryAuth",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            { "name": "part", "value": "snippet" },
+            { "name": "type", "value": "video" },
+            { "name": "videoCategoryId", "value": "10" },
+            { "name": "maxResults", "value": "={{ $json.max }}" },
+            { "name": "q", "value": "={{ $json.q }}" }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "b1a00001-0000-4000-8000-000000000005",
+      "name": "YouTube · duraciones",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [960, -120],
+      "onError": "continueErrorOutput",
+      "parameters": {
+        "method": "GET",
+        "url": "https://www.googleapis.com/youtube/v3/videos",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpQueryAuth",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            { "name": "part", "value": "snippet,contentDetails" },
+            { "name": "maxResults", "value": "50" },
+            { "name": "id", "value": "={{ ($json.items || []).map(i => i.id && i.id.videoId).filter(Boolean).join(',') || 'ninguno' }}" }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "b1a00001-0000-4000-8000-000000000006",
+      "name": "Formatear y guardar en caché",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1200, -120],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// Mismos campos que usa la app: videoId, title, channel, thumb, duration (segundos), en el orden de la búsqueda\nconst iso = (s) => { const m = /P(?:(\\d+)D)?T?(?:(\\d+)H)?(?:(\\d+)M)?(?:(\\d+)S)?/.exec(s || ''); return m ? (+m[1] || 0) * 86400 + (+m[2] || 0) * 3600 + (+m[3] || 0) * 60 + (+m[4] || 0) : 0; };\nconst order = ($('YouTube · buscar').first().json.items || []).map(i => i.id && i.id.videoId).filter(Boolean);\nconst byId = Object.fromEntries(($input.first().json.items || []).map(v => [v.id, v]));\nconst items = order.filter(id => byId[id]).map(id => {\n  const v = byId[id], sn = v.snippet || {}, th = sn.thumbnails || {};\n  return { videoId: id, title: sn.title || id, channel: sn.channelTitle || '', thumb: (th.medium || th.default || {}).url || '', duration: iso(v.contentDetails && v.contentDetails.duration) };\n});\nconst { key, cacheMax } = $('Límite y caché').first().json;\nconst data = $getWorkflowStaticData('global');\ndata.cache = data.cache || {};\ndata.cache[key] = { t: Date.now(), items };\nconst keys = Object.keys(data.cache);\nif (keys.length > cacheMax) keys.sort((a, b) => data.cache[a].t - data.cache[b].t).slice(0, keys.length - cacheMax).forEach(k => delete data.cache[k]);\nreturn [{ json: { items } }];"
+      }
+    },
+    {
+      "id": "b1a00001-0000-4000-8000-000000000007",
+      "name": "Responder resultados",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [1440, -40],
+      "parameters": { "respondWith": "json", "responseBody": "={{ JSON.stringify({ items: $json.items || [] }) }}", "options": {} }
+    },
+    {
+      "id": "b1a00001-0000-4000-8000-000000000008",
+      "name": "Responder límite (429)",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [720, 120],
+      "parameters": { "respondWith": "json", "responseBody": "={ \"error\": \"limit\" }", "options": { "responseCode": 429 } }
+    },
+    {
+      "id": "b1a00001-0000-4000-8000-000000000009",
+      "name": "Responder no válida (400)",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [720, 280],
+      "parameters": { "respondWith": "json", "responseBody": "={ \"error\": \"invalid\" }", "options": { "responseCode": 400 } }
+    },
+    {
+      "id": "b1a00001-0000-4000-8000-00000000000a",
+      "name": "Responder fallo de YouTube (503)",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [1200, 120],
+      "notes": "La app lo muestra como «El servicio de búsqueda no responde ahora mismo». Suele ser la cuota diaria de la clave de NexuraIA agotada.",
+      "parameters": { "respondWith": "json", "responseBody": "={ \"error\": \"youtube\" }", "options": { "responseCode": 503 } }
+    }
+  ],
+  "connections": {
+    "Búsqueda recibida": { "main": [[{ "node": "Límite y caché", "type": "main", "index": 0 }]] },
+    "Límite y caché": { "main": [[{ "node": "¿Qué hacer?", "type": "main", "index": 0 }]] },
+    "¿Qué hacer?": {
+      "main": [
+        [{ "node": "YouTube · buscar", "type": "main", "index": 0 }],
+        [{ "node": "Responder resultados", "type": "main", "index": 0 }],
+        [{ "node": "Responder límite (429)", "type": "main", "index": 0 }],
+        [{ "node": "Responder no válida (400)", "type": "main", "index": 0 }]
+      ]
+    },
+    "YouTube · buscar": {
+      "main": [
+        [{ "node": "YouTube · duraciones", "type": "main", "index": 0 }],
+        [{ "node": "Responder fallo de YouTube (503)", "type": "main", "index": 0 }]
+      ]
+    },
+    "YouTube · duraciones": {
+      "main": [
+        [{ "node": "Formatear y guardar en caché", "type": "main", "index": 0 }],
+        [{ "node": "Responder fallo de YouTube (503)", "type": "main", "index": 0 }]
+      ]
+    },
+    "Formatear y guardar en caché": { "main": [[{ "node": "Responder resultados", "type": "main", "index": 0 }]] }
+  },
+  "settings": { "executionOrder": "v1", "timezone": "Europe/Madrid", "saveDataSuccessExecution": "none", "saveDataErrorExecution": "all" }
+}

@@ -2,6 +2,9 @@
 'use strict';
 const { contextBridge, ipcRenderer, webUtils } = require('electron');
 
+// Los errores de ipcMain.handle llegan como «Error invoking remote method 'x': Error: …»: se deja solo el mensaje
+const plain = (p) => p.catch((e) => { throw new Error(String(e && e.message || e).replace(/^Error invoking remote method '[^']+': (Error: )?/, '')); });
+
 contextBridge.exposeInMainWorld('nexura', {
   isDesktop: true,
   info: () => ipcRenderer.invoke('app:info'),
@@ -70,7 +73,9 @@ contextBridge.exposeInMainWorld('nexura', {
   },
   yt: {
     oembed: (id) => ipcRenderer.invoke('yt:oembed', id),
-    api: (endpoint, params, apiKey) => ipcRenderer.invoke('yt:api', endpoint, params, apiKey),
+    api: (endpoint, params, apiKey) => plain(ipcRenderer.invoke('yt:api', endpoint, params, apiKey)),
+    search: (q, max) => ipcRenderer.invoke('yt:search', q, max),
+    checkKey: (key) => ipcRenderer.invoke('yt:checkKey', key),
     login: (clientId, clientSecret) => ipcRenderer.invoke('yt:login', clientId, clientSecret),
     logout: () => ipcRenderer.invoke('yt:logout'),
     status: () => ipcRenderer.invoke('yt:status')

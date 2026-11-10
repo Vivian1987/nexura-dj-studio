@@ -1,5 +1,6 @@
 {
-  "_info": "Direcciones de los servicios de NexuraIA. Vacío = desactivado. feedbackUrl: POST JSON con los informes y sugerencias. statsUrl: POST JSON con el contador anónimo (como mucho una vez al día y solo si el usuario lo permite).",
+  "_info": "Direcciones de los servicios de NexuraIA. Vacío = desactivado. feedbackUrl: POST JSON con los informes y sugerencias. statsUrl: POST JSON con el contador anónimo (como mucho una vez al día y solo si el usuario lo permite). searchUrl: POST JSON {id, q, max} para buscar en YouTube sin clave propia (devuelve {items} o HTTP 429 al llegar al límite diario).",
   "feedbackUrl": "",
-  "statsUrl": ""
+  "statsUrl": "",
+  "searchUrl": ""
 }

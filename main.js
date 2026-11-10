@@ -18,10 +18,12 @@ const { createLogger } = require('./main/logger');
 const backup = require('./main/backup');
 const report = require('./main/report');
 const stats = require('./main/stats');
+const ytSearch = require('./src/js/shared/yt-search.js');
 const { createUpdater } = require('./main/updater');
 
 // Servicios de NexuraIA (src/config/servicios.json; vacío = desactivado):
-//   feedbackUrl → informes y sugerencias (POST JSON); statsUrl → contador anónimo de uso (POST JSON).
+//   feedbackUrl → informes y sugerencias (POST JSON); statsUrl → contador anónimo de uso (POST JSON);
+//   searchUrl → búsqueda de YouTube sin clave propia (POST JSON { id, q, max }; ver src/js/shared/yt-search.js).
 // Compatibilidad con la beta: si feedbackUrl está vacío se usa «feedbackWebhook» de config.local.json
 // (archivo privado, no se sube al repositorio; ver config.local.example.json).
 function readJsonFile(p) { try { return JSON.parse(fs.readFileSync(p, 'utf8')); } catch (_) { return {}; } }
@@ -30,6 +32,8 @@ const LEGACY_WEBHOOK = String(readJsonFile(path.join(__dirname, 'config.local.js
 const webUrl = (u) => (/^https?:\/\//.test(String(u || '')) ? String(u) : '');
 const FEEDBACK_URL = webUrl(SERVICES.feedbackUrl) || webUrl(LEGACY_WEBHOOK);
 const STATS_URL = webUrl(SERVICES.statsUrl);
+// searchUrl → búsqueda de YouTube para quien no tiene clave propia. NEXURA_SEARCH_URL solo para pruebas.
+const SEARCH_URL = webUrl(process.env.NEXURA_SEARCH_URL) || webUrl(SERVICES.searchUrl);
 const OS_LABEL = report.windowsLabel(process.platform, os.release());
 
 // El audio en tiempo real no debe frenarse cuando la ventana pierde el foco
@@ -576,11 +580,13 @@ async function spotifyEmbed(type, id) {
 const EXTERNAL_HOSTS = [
   'youtube.com', 'youtu.be', 'nexuraia.com',
   'spotify.com', // open.spotify.com y developer.spotify.com (instrucciones de Ajustes → Spotify)
-  'beatport.com', 'bandcamp.com', 'music.apple.com', 'itunes.apple.com' // «Comprar»
+  'beatport.com', 'bandcamp.com', 'music.apple.com', 'itunes.apple.com', // «Comprar»
+  'console.cloud.google.com' // crear la clave de YouTube (Ajustes → YouTube)
 ];
 function externalAllowed(url) {
   try {
     const u = new URL(url);
+    if (u.protocol === 'https:' && u.hostname === 'github.com' && /^\/mcontrerasdevpro\/nexura-dj-studio(\/|$)/.test(u.pathname)) return true; // guía del README
     return u.protocol === 'https:' && EXTERNAL_HOSTS.some(h => u.hostname === h || u.hostname.endsWith('.' + h));
   } catch (_) { return false; }
 }
@@ -713,7 +719,7 @@ function registerIpc() {
   ipcMain.handle('app:info', () => ({
     os: `${os.type()} ${os.release()} (${os.arch()})`, electron: process.versions.electron,
     isBeta: /beta|alpha|rc/i.test(app.getVersion()), osLabel: OS_LABEL, store: !!process.windowsStore,
-    services: { feedback: !!FEEDBACK_URL, stats: !!STATS_URL }, updates: !!(updater && updater.status().state !== 'disabled'),
+    services: { feedback: !!FEEDBACK_URL, stats: !!STATS_URL, search: !!SEARCH_URL }, updates: !!(updater && updater.status().state !== 'disabled'),
     version: app.getVersion(), name: APP_NAME, platform: process.platform,
     userData: app.getPath('userData'), recordings: recDir()
   }));
@@ -1003,11 +1009,23 @@ function registerIpc() {
     if (token) headers.Authorization = 'Bearer ' + token;
     else if (apiKey) q.set('key', apiKey);
     else throw new Error('Necesitas una clave de API de YouTube o conectar tu cuenta de Google en Ajustes');
-    const r = await fetch(`https://www.googleapis.com/youtube/v3/${endpoint}?${q}`, { headers });
-    const j = await r.json();
-    if (!r.ok) throw new Error((j.error && j.error.message) || 'Error de la API de YouTube');
+    let r;
+    try { r = await fetch(`https://www.googleapis.com/youtube/v3/${endpoint}?${q}`, { headers }); } catch (_) { throw new Error(ytSearch.MSG.net); }
+    let j = null;
+    try { j = await r.json(); } catch (_) { j = null; }
+    if (!r.ok) throw new Error(ytSearch.ytErrorInfo(r.status, j).message);
     return j;
   });
+  // Búsqueda por el servicio de NexuraIA (sin clave propia): solo el texto, el nº de resultados y el id anónimo
+  // de la instalación (data/instalacion.id, el del contador; se crea aunque las estadísticas estén desactivadas)
+  ipcMain.handle('yt:search', async (_e, q, max) => {
+    const id = stats.loadState(path.join(dataDir(), 'instalacion.id')).id;
+    try { return { items: await ytSearch.serviceSearch({ url: SEARCH_URL, id, q, max }) }; } catch (e) {
+      log(e.code === 'limit' ? 'INFO' : 'WARN', 'youtube', 'Búsqueda por el servicio: ' + (e.code || 'error') + (e.status ? ' HTTP ' + e.status : ''));
+      return { error: e.code || 'down', message: e.message };
+    }
+  });
+  ipcMain.handle('yt:checkKey', async (_e, key) => ytSearch.checkKey(key));
   ipcMain.handle('yt:login', async (_e, clientId, clientSecret) => ytOAuthLogin(clientId, clientSecret));
   ipcMain.handle('yt:logout', async () => { ytTokens = null; await saveSecrets(); return true; });
   ipcMain.handle('yt:status', async () => ({ connected: !!(ytTokens && ytTokens.refresh_token) }));

@@ -43,6 +43,53 @@ export class SettingsUI {
   row(label, control, hint) {
     return el('div', { class: 'set-row' }, el('div', { class: 'set-label' }, label, hint ? el('small', {}, hint) : null), el('div', { class: 'set-ctl' }, control));
   }
+  // Campo para claves y secretos: muestra solo el principio («AIza••••••••»); al entrar se pega una nueva
+  // (tipo contraseña; vacío = se queda la actual) y 👁 la enseña 5 s. Devuelve { box, input, value, commit }.
+  secretField(value, placeholder, save, mask) {
+    let real = String(value || ''), editing = false, shown = 0;
+    const input = el('input', { class: 'wide secret', type: 'text', spellcheck: 'false', autocomplete: 'off' });
+    const eye = el('button', { class: 'btn micro eye', type: 'button', title: 'Ver un momento', 'aria-label': 'Ver un momento' }, '👁');
+    const del = btn('Quitar', { cls: 'micro', title: 'Borrar la clave guardada' });
+    const idle = () => {
+      clearTimeout(shown); shown = 0; editing = false;
+      input.type = 'text'; input.readOnly = false;
+      input.value = mask(real);
+      input.placeholder = placeholder;
+      eye.disabled = !real; del.hidden = !real;
+      eye.classList.remove('on');
+    };
+    const f = {
+      box: el('div', { class: 'secret-box' }, input, eye, del), input,
+      get value() { return real; },
+      // guarda lo escrito (nunca la máscara) y vuelve a ocultar
+      commit() {
+        if (shown) return;
+        const v = input.value.trim();
+        if (v && !v.includes('•') && v !== real) { real = v; save(v); }
+        idle();
+      }
+    };
+    input.addEventListener('focus', () => {
+      if (shown || editing) return;
+      editing = true;
+      input.type = 'password'; input.value = '';
+      input.placeholder = real ? 'Pega una nueva (vacío = mantener la actual)' : placeholder;
+    });
+    input.addEventListener('blur', () => f.commit());
+    input.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); f.commit(); input.blur(); } else if (e.key === 'Escape' && editing) { e.stopPropagation(); idle(); input.blur(); } });
+    eye.addEventListener('mousedown', (e) => e.preventDefault());
+    eye.addEventListener('click', () => {
+      if (shown) return idle();
+      f.commit();
+      if (!real) return;
+      input.type = 'text'; input.readOnly = true; input.value = real;
+      eye.classList.add('on');
+      shown = setTimeout(idle, 5000);
+    });
+    del.addEventListener('click', () => { real = ''; save(''); idle(); });
+    idle();
+    return f;
+  }
   toggle(key, onChange) {
     const s = this.app.settings;
     const t = el('input', { type: 'checkbox', class: 'switch' });
@@ -403,12 +450,25 @@ export class SettingsUI {
 
   async page_youtube(p) {
     const app = this.app, s = app.settings;
-    const key = el('input', { value: s.ytApiKey, class: 'wide', placeholder: 'AIza…' });
-    key.addEventListener('change', () => app.setSetting('ytApiKey', key.value.trim()));
+    const yt = await app.platform.yt.texts();
+    const key = this.secretField(s.ytApiKey, 'AIza…', (v) => app.setSetting('ytApiKey', v), yt.maskKey);
     const cid = el('input', { value: s.ytClientId, class: 'wide', placeholder: '…apps.googleusercontent.com' });
     cid.addEventListener('change', () => app.setSetting('ytClientId', cid.value.trim()));
-    const csec = el('input', { value: s.ytClientSecret, class: 'wide', type: 'password' });
-    csec.addEventListener('change', () => app.setSetting('ytClientSecret', csec.value.trim()));
+    const csec = this.secretField(s.ytClientSecret, 'GOCSPX-…', (v) => app.setSetting('ytClientSecret', v), yt.maskKey);
+    const keyMsg = el('span', { class: 'key-check hint', role: 'status', 'aria-live': 'polite' });
+    const checkBtn = btn('Comprobar clave', {
+      cls: 'small', onClick: async () => {
+        key.commit();
+        if (!key.value) { keyMsg.className = 'key-check warn'; keyMsg.textContent = yt.MSG.empty; return; }
+        checkBtn.disabled = true;
+        keyMsg.className = 'key-check hint'; keyMsg.textContent = 'Comprobando…';
+        const r = await app.platform.yt.checkKey(key.value).catch(e => ({ ok: false, message: e.message }));
+        checkBtn.disabled = false;
+        keyMsg.className = 'key-check ' + (r.ok ? 'ok' : 'error');
+        keyMsg.textContent = (r.ok ? '✓ ' : '✗ ') + r.message;
+      }
+    });
+    const service = await app.platform.yt.searchAvailable().catch(() => false);
     const st = await app.platform.yt.status().catch(() => ({ connected: false }));
     const statusEl = el('span', { class: 'status-pill' + (st.connected ? ' ok' : '') }, st.connected ? 'Cuenta de Google conectada' : 'Sin cuenta conectada');
     p.append(
@@ -416,20 +476,27 @@ export class SettingsUI {
       el('p', { class: 'hint' }, 'Las pistas de YouTube se reproducen en el reproductor oficial dentro del deck (vídeo visible). Puedes usar play/pausa, cue, hot cues, tempo (pasos de 5 %), fader de canal, crossfader y master. Por las condiciones de YouTube, su audio no pasa por el motor: no hay EQ, filtro, FX, scratch, loops ni cue de auriculares en esas pistas, y suena por la salida predeterminada de Windows (pon tu controladora o interfaz como dispositivo predeterminado).'),
       el('h3', {}, 'Importar listas sin configurar nada'),
       el('p', { class: 'hint' }, 'Pega la URL de cualquier lista pública o no listada en «YouTube → + Lista». Sin clave se importan hasta 200 vídeos por lista.'),
+      el('h3', {}, 'Buscar vídeos'),
+      el('p', { class: 'hint' }, service
+        ? 'Sin configurar nada puedes buscar con el servicio gratuito de NexuraIA (30 búsquedas al día; solo se envía el texto buscado y un identificador anónimo de la instalación). Con tu propia clave la búsqueda va directamente a Google y tienes unas 100 al día.'
+        : 'Para buscar vídeos necesitas tu propia clave de API (gratis) o tu cuenta de Google conectada.'),
       el('h3', {}, 'Clave de API (opcional)'),
-      this.row('YouTube Data API key', key, 'Listas completas, duraciones y búsqueda. Se crea gratis en Google Cloud Console.'),
+      this.row('YouTube Data API key', key.box, 'Listas completas, duraciones y búsqueda. Se crea gratis en Google Cloud Console.'),
+      el('div', { class: 'row' }, checkBtn,
+        btn('Cómo crear la clave', { cls: 'small', onClick: () => app.platform.openExternal(yt.GUIDE) }), keyMsg),
       el('h3', {}, 'Conectar tu cuenta de Google (opcional)'),
       el('p', { class: 'hint' }, 'Para ver «Mis listas» (incluidas las privadas). Crea un cliente OAuth de tipo «Aplicación de escritorio» con la API YouTube Data v3 activada.'),
-      this.row('Client ID', cid), this.row('Client secret', csec),
+      this.row('Client ID', cid), this.row('Client secret', csec.box),
       el('div', { class: 'row' }, statusEl,
         btn(st.connected ? 'Desconectar' : 'Conectar cuenta', {
           cls: 'small', onClick: async () => {
             try {
               if (st.connected) await app.platform.yt.logout();
               else {
-                if (!cid.value.trim() || !csec.value.trim()) return toast('Introduce el Client ID y el Client secret', 'warn');
+                csec.commit();
+                if (!cid.value.trim() || !csec.value) return toast('Introduce el Client ID y el Client secret', 'warn');
                 toast('Se ha abierto el navegador para iniciar sesión en Google…', 'info', 6000);
-                await app.platform.yt.login(cid.value.trim(), csec.value.trim());
+                await app.platform.yt.login(cid.value.trim(), csec.value);
                 toast('Cuenta de Google conectada', 'ok');
               }
             } catch (e) { toast(e.message, 'error', 6000); }
@@ -505,7 +572,7 @@ export class SettingsUI {
       el('p', { class: 'about-ver' }, `Versión ${i.version}${i.osLabel ? ' · ' + i.osLabel : ''}`),
       el('p', {}, '© 2026 NexuraIA · Gratis durante la fase de lanzamiento.'),
       el('p', { class: 'hint' }, 'Software DJ de NexuraIA. Decks con keylock, sync, hot cues, loops, roll, slicer, beat jump, pitch play, slip y censor; mezclador con EQ y filtro; 2 unidades de 3 efectos; sampler de 32 ranuras; stems con IA; análisis de BPM, tonalidad y forma de onda; crates, smart crates, Prepare e historial; grabación; listas de YouTube y Spotify (solo metadatos); compatible con cualquier controladora MIDI.'),
-      el('p', { class: 'about-links' }, link('Licencia de uso', () => app.legal.show('licencia'), 'about-lic'), ' · ', link('Política de privacidad', () => app.legal.show('privacidad'), 'about-priv'), ' · ', link('Licencias de terceros', () => app.legal.show('terceros'), 'about-3p')),
+      el('p', { class: 'about-links' }, link('Licencia de uso', () => app.legal.show('licencia'), 'about-lic'), ' · ', link('Política de privacidad', () => app.legal.show('privacidad'), 'about-priv'), ' · ', link('Licencias de terceros', () => app.legal.show('terceros'), 'about-3p'), ' · ', link('Novedades de esta versión', () => app.notes.show(), 'about-notes')),
       el('p', {}, 'contacto@nexuraia.com · nexuraia.com'),
       el('h3', {}, 'Errores y sugerencias'),
       el('p', { class: 'hint' }, 'Cuéntanos un error o una idea. Puedes adjuntar el registro técnico de la app (sin rutas ni nombres de canciones) y ver antes exactamente qué se envía.'),

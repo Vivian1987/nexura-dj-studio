@@ -189,10 +189,24 @@ export class YouTubeService {
     return out;
   }
 
-  async search(q) {
-    const r = await this.api('search', { part: 'snippet', q, type: 'video', maxResults: 25, videoCategoryId: '10' });
-    const ids = (r.items || []).map(i => i.id.videoId).filter(Boolean);
-    return this.videosInfo(ids);
+  // ¿Se puede buscar? Con clave propia o cuenta conectada (va directo a Google) o, si no, con el servicio de NexuraIA
+  async canSearch() { return (await this.canUseApi()) || await platform.yt.searchAvailable().catch(() => false); }
+
+  // Prioridad: clave propia / cuenta de Google → servicio de NexuraIA (searchUrl) → error con code 'none'.
+  // Los errores del servicio llevan code 'limit' (cupo diario agotado, HTTP 429), 'down' o 'bad'.
+  async search(q, max = 25) {
+    if (await this.canUseApi()) {
+      const r = await this.api('search', { part: 'snippet', q, type: 'video', maxResults: max, videoCategoryId: '10' });
+      const ids = (r.items || []).map(i => i.id.videoId).filter(Boolean);
+      return this.videosInfo(ids);
+    }
+    if (!(await platform.yt.searchAvailable().catch(() => false))) {
+      const { MSG } = await platform.yt.texts();
+      throw Object.assign(new Error(MSG.none), { code: 'none' });
+    }
+    const r = await platform.yt.search(q, max);
+    if (r && r.error) throw Object.assign(new Error(r.message), { code: r.error });
+    return (r && r.items) || [];
   }
 }
 
@@ -211,6 +225,7 @@ export class YTSource {
   async load(videoId) {
     const YT = await loadYouTubeApi();
     this.videoId = videoId;
+    this.resetClock(0);
     if (this.player && this.ready) {
       this.player.cueVideoById(videoId, 0);
       return;
@@ -224,17 +239,55 @@ export class YTSource {
         playerVars: { autoplay: 0, controls: 0, disablekb: 1, modestbranding: 1, rel: 0, playsinline: 1, origin: location.origin, iv_load_policy: 3 },
         events: {
           onReady: () => { this.ready = true; this.player.setVolume(0); resolve(); },
-          onStateChange: (e) => { this.state = e.data; if (e.data === 0 && this.onEnded) this.onEnded(); },
+          onStateChange: (e) => {
+            this.state = e.data;
+            // al cambiar de vídeo el reproductor puede volver a velocidad 1: se reaplica la del deck
+            if (e.data === 1 && this.rate && this.player.getPlaybackRate && this.player.getPlaybackRate() !== this.rate) this.player.setPlaybackRate(this.rate);
+            if (e.data === 0 && this.onEnded) this.onEnded();
+          },
           onError: (e) => { if (this.onError) this.onError(e.data); resolve(); }
         }
       });
     });
   }
   play() { if (this.ready) this.player.playVideo(); }
-  pause() { if (this.ready) this.player.pauseVideo(); }
-  seek(t) { if (this.ready) this.player.seekTo(Math.max(0, t), true); }
-  time() { return this.ready && this.player.getCurrentTime ? this.player.getCurrentTime() || 0 : 0; }
-  duration() { return this.ready && this.player.getDuration ? this.player.getDuration() || 0 : 0; }
+  pause() { if (this.ready) this.player.pauseVideo(); this._ext = null; }
+  seek(t) {
+    if (!this.ready) return;
+    t = Math.max(0, t);
+    this.player.seekTo(t, true);
+    this.resetClock(t);
+  }
+  // Mientras el reproductor no confirma la nueva posición (llega por mensajes del iframe), se muestra
+  // la pedida; así el contador no vuelve un instante al tiempo anterior tras un seek o un vídeo nuevo
+  resetClock(t) { this._pending = { t, at: performance.now() }; this._raw = null; this._ext = null; }
+  // ¿El reproductor ya informa del vídeo pedido? (tras cueVideoById puede dar un instante los datos del anterior)
+  current() {
+    const p = this.player;
+    if (!this.ready || !p) return false;
+    const v = p.getVideoData && p.getVideoData();
+    return !v || !v.video_id || v.video_id === this.videoId;
+  }
+  // Tiempo del vídeo, fluido: getCurrentTime solo cambia cada ~250 ms (llega del iframe), así que
+  // entre dos valores se avanza con la velocidad de reproducción, sin retroceder por el desfase
+  time() {
+    if (!this.current() || !this.player.getCurrentTime) return this._pending ? this._pending.t : 0;
+    const raw = this.player.getCurrentTime() || 0, now = performance.now();
+    if (this._pending) {
+      if (Math.abs(raw - this._pending.t) > 0.75 && now - this._pending.at < 1500) return this._pending.t;
+      this._pending = null;
+    }
+    // parado: se reancla en cada consulta, así al pulsar play no se extrapola desde un valor viejo
+    if (raw !== this._raw || this.state !== 1) { this._raw = raw; this._rawAt = now; }
+    if (this.state !== 1) { this._ext = null; return raw; }
+    // como mucho 1 s por delante del último valor (si el vídeo se atasca, el contador se para)
+    const rate = (this.player.getPlaybackRate && this.player.getPlaybackRate()) || this.rate || 1;
+    let t = raw + Math.min(1, (now - this._rawAt) / 1000) * rate;
+    if (this._ext && t < this._ext && this._ext - t < 0.3) t = this._ext;
+    this._ext = t;
+    return t;
+  }
+  duration() { return this.current() && this.player.getDuration ? this.player.getDuration() || 0 : 0; }
   isPlaying() { return this.state === 1 || this.state === 3; }
   setRate(r) {
     if (!this.ready) return 1;

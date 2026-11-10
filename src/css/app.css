@@ -606,6 +606,21 @@ kbd { font: 11px var(--mono); background: var(--panel3); border: 1px solid var(-
 .bk-date { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .bk-meta { color: var(--muted); font-size: 11px; }
 .bk-row.bad .bk-meta { color: var(--warn); }
+/* Claves y secretos ocultos (Ajustes → YouTube) */
+.secret-box { display: flex; gap: 4px; align-items: center; min-width: 0; }
+.secret-box input.secret { flex: 1; min-width: 0; font-family: var(--mono); }
+.secret-box .eye { min-width: 30px; }
+.secret-box .eye.on { color: var(--accent); border-color: var(--accent); }
+.key-check { flex: 1 1 220px; font-size: 12px; }
+.key-check.ok { color: var(--ok); }
+.key-check.error { color: #ff7a82; }
+.key-check.warn { color: var(--warn); }
+/* Novedades de la versión */
+.notes { width: min(620px, 86vw); max-height: 62vh; overflow: auto; line-height: 1.5; }
+.notes h3 { font-size: 15px; color: var(--accent); margin: 14px 0 6px; }
+.notes h3:first-child { margin-top: 0; }
+.notes ul { margin: 0 0 8px; padding-left: 20px; }
+.notes li { margin: 3px 0; }
 .about-ver { font: 600 13px var(--mono); }
 .about-links { display: flex; flex-wrap: wrap; gap: 4px 6px; align-items: baseline; }
 
@@ -721,7 +736,7 @@ body.laptop-mode .deck-detail-wave { height: 60px; }
   .set-row { grid-template-columns: minmax(0, 1fr); }
   .bk-row { grid-template-columns: minmax(0, 1fr) auto; }
   .bk-meta { grid-column: 1; }
-  .legal-text { width: calc(94vw - 46px); }
+  .legal-text, .notes { width: calc(94vw - 46px); }
   .sp-import { width: calc(94vw - 46px); } /* relleno del diálogo + su barra de scroll */
   .sp-in { flex-wrap: wrap; }
   .sp-in input { flex-basis: 100%; }

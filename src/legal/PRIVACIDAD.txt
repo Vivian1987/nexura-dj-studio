@@ -1,7 +1,7 @@
 ﻿NEXURA DJ STUDIO — POLÍTICA DE PRIVACIDAD
-Versión 1.0 · noviembre de 2026
+Versión 1.1 · noviembre de 2026
 
-Responsable: NexuraIA ([COMPLETAR: nombre o razón social, NIF y domicilio])
+Responsable: Miguel Contreras Gallardo (NexuraIA), NIF 26035618D, Calle Guanabacoa 2A, Bajo, 28907 Getafe (Madrid)
 Contacto para cualquier cuestión de privacidad: contacto@nexuraia.com
 
 Resumen: Nexura DJ Studio funciona en tu ordenador. Tu música, tu biblioteca y tus ajustes no salen de él. Solo se envía algo a Internet si tú lo pides o lo permites, y aquí se explica exactamente qué.
@@ -27,7 +27,10 @@ Se envía el tipo y el texto que escribes, tu email si lo indicas (solo para res
 c) Actualizaciones (Ajustes → General → «Buscar actualizaciones automáticamente»).
 La app consulta las versiones publicadas en GitHub (GitHub, Inc.). Como en cualquier descarga, GitHub recibe tu dirección IP y la versión que se descarga; NexuraIA no recibe nada.
 
-d) Servicios que usas tú expresamente: al reproducir vídeos de YouTube o importar listas de Spotify, la app se conecta con esos servicios, que tratan tus datos según sus propias políticas (Google y Spotify). Lo mismo con el asistente de IA si configuras Ollama (funciona en tu propio equipo).
+d) Búsqueda de vídeos de YouTube sin clave propia (solo cuando buscas).
+Si no has puesto tu propia clave de YouTube en Ajustes → YouTube, la búsqueda pasa por un servicio de NexuraIA que consulta YouTube por ti. Se envía SOLO el texto que buscas, el número de resultados y el mismo identificador aleatorio de la instalación de las estadísticas (para limitar las búsquedas gratuitas diarias; se envía aunque las estadísticas estén desactivadas, y nunca junto con otros datos). Los resultados de cada búsqueda se guardan 7 días para no repetir consultas, y el contador de búsquedas por identificador, como mucho 30 días. Con tu propia clave la búsqueda va directamente a Google y NexuraIA no recibe nada. Base legal: el interés legítimo en prestar el servicio que pides y evitar abusos.
+
+e) Servicios que usas tú expresamente: al reproducir vídeos de YouTube o importar listas de Spotify, la app se conecta con esos servicios, que tratan tus datos según sus propias políticas (Google y Spotify). Lo mismo con el asistente de IA si configuras Ollama (funciona en tu propio equipo).
 
 3. CONSERVACIÓN Y DESTINATARIOS
 Los informes y sugerencias se conservan mientras sean útiles para resolver el problema o la propuesta, y como máximo 2 años. Las estadísticas se guardan de forma agregada. Para recibirlos, NexuraIA puede usar proveedores de alojamiento y automatización que actúan como encargados del tratamiento. No vendemos ni cedemos tus datos.

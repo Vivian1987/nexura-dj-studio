@@ -46,7 +46,7 @@ process.env.NEXURA_UPDATER_TEST = '1';
 // --- datos: biblioteca dañada + una copia buena de ayer
 const track = (id, title, artist) => ({ id, path: `C:\\Users\\Pepe\\Music\\${artist} - ${title}.mp3`, source: 'local', title, artist, album: '', genre: 'House', bpm: 124, firstBeat: 0.1, key: '', camelot: '8A', duration: 200, size: 1, cues: Array(8).fill(null), loops: Array(8).fill(null), cueLoops: Array(8).fill(null), added: 1, plays: 0, lastPlayed: 0, analyzed: true, energy: 5, sections: [] });
 const good = { tracks: [track('a1', 'Titanium', 'David Guetta'), track('a2', 'Seek Bromance', 'Tim Berg'), track('a3', 'Levels', 'Avicii')], crates: [{ id: 'c1', name: 'Boda de Lucía', ids: ['a1', 'a3'] }], smart: [], history: [], prepare: ['a2'], ytPlaylists: [] };
-const settings = { welcomeDone: true, statsEnabled: true, autoUpdate: true, waveLayout: 'serato' };
+const settings = { welcomeDone: true, statsEnabled: true, autoUpdate: true, waveLayout: 'serato', lastVersion: pkg.version }; // sin aviso de novedades (lo prueba ui-check-rc2-escritorio.cjs)
 const data = path.join(tmp, 'data');
 fs.mkdirSync(path.join(data, 'waveforms'), { recursive: true });
 fs.writeFileSync(path.join(data, 'library.json'), JSON.stringify(good).slice(0, 180)); // cortado: corte de luz
@@ -123,7 +123,7 @@ async function run(win) {
   await js(win, `nexuraApp.feedback.open('error'); true`);
   await wait(1200);
   s = await js(win, `document.querySelector('#fb-preview').textContent`);
-  check('Vista previa del registro real sin rutas ni canciones', /Versión: 1\.0\.0-rc\.1/.test(s) && /<ruta>/.test(s) && !/Pepe|Levels|Avicii|Music/.test(s), { tail: String(s).slice(-300) });
+  check('Vista previa del registro real sin rutas ni canciones', String(s).includes('Versión: ' + pkg.version) && /<ruta>/.test(s) && !/Pepe|Levels|Avicii|Music/.test(s), { tail: String(s).slice(-300) });
   await js(win, `document.querySelector('#fb-text').value = 'Se corta el audio al cargar'; document.querySelector('#fb-email').value = 'dj@example.com'; [...document.querySelectorAll('.modal-foot .btn')].find(b => b.textContent === 'Enviar').click(); true`);
   await wait(2500);
   s = await js(win, `({ title: document.querySelector('.modal-head h2')?.textContent, body: document.querySelector('.modal-body')?.textContent, errs: [...document.querySelectorAll('.toast.error')].length })`);
@@ -137,7 +137,7 @@ async function run(win) {
   // registro local
   const logs = fs.existsSync(path.join(tmp, 'logs')) ? fs.readdirSync(path.join(tmp, 'logs')) : [];
   const log = logs.includes('nexura.log') ? fs.readFileSync(path.join(tmp, 'logs', 'nexura.log'), 'utf8') : '';
-  check('Registro local en <datos>\\logs con arranque, restauración, audio y actualizaciones', /Inicio Nexura DJ Studio 1\.0\.0-rc\.1/.test(log) && /Restaurada la copia 2026-11-09_2130/.test(log) && /\[ui:audio\] AudioContext/.test(log) && /\[actualizaciones\]/.test(log), { logs, tail: log.split('\n').slice(-8) });
+  check('Registro local en <datos>\\logs con arranque, restauración, audio y actualizaciones', log.includes('Inicio Nexura DJ Studio ' + pkg.version) && /Restaurada la copia 2026-11-09_2130/.test(log) && /\[ui:audio\] AudioContext/.test(log) && /\[actualizaciones\]/.test(log), { logs, tail: log.split('\n').slice(-8) });
   s = await js(win, `[...document.querySelectorAll('.toast.error')].map(t => t.textContent)`);
   check('Ningún aviso de error en pantalla en toda la sesión' + (ONLINE ? ' (con red, sin releases)' : ' sin red'), !s.length, { s });
   report.updaterLog = log.split('\n').filter(l => /actualizaciones/.test(l));

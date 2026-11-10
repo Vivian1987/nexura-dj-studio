@@ -347,7 +347,8 @@ export class DeckUI {
       this.flipPlayBtn.classList.toggle('on', flipState.playing);
       const flip = flipState.flips[Number(this.flipSlot.value)];
       this.flipPlayBtn.title = flip ? `${flip.name || 'Flip'} · ${flip.events?.length || 0} acciones` : 'Ranura vacía';
-      if (t && !d.isYT) this.app.analyzer.getWave(t.id).then(w => { this.overview.setWave(w); this.waveDetail.setWave(w); });
+      // (si mientras tanto se ha cargado otra pista o un vídeo, la forma de onda ya no es de este deck)
+      if (t && !d.isYT) this.app.analyzer.getWave(t.id).then(w => { if (d.track !== t || d.isYT) return; this.overview.setWave(w); this.waveDetail.setWave(w); });
       else { this.overview.setWave(null); this.waveDetail.setWave(null); }
     }
     this.playBtn.classList.toggle('on', d.playing);
@@ -416,8 +417,9 @@ export class DeckUI {
     const time = d.time;
     this.elapsed.textContent = fmtTime(time);
     if (this.gridEdit && d.hasGridMarkers && (this._gf = (this._gf || 0) + 1) % 6 === 0) this.refreshGrid();
-    this.remain.textContent = '-' + fmtTime(Math.max(0, d.duration - time));
-    this.remain.classList.toggle('warn', d.playing && d.duration - time < 30);
+    // vídeo de YouTube cuya duración aún no ha dado el reproductor: «--:--» en vez de un 0 engañoso
+    this.remain.textContent = t && !d.duration ? '--:--.-' : '-' + fmtTime(Math.max(0, d.duration - time));
+    this.remain.classList.toggle('warn', d.playing && d.duration > 0 && d.duration - time < 30);
     const bpm = d.currentBpm;
     this.bpmEl.firstChild.textContent = bpm ? bpm.toFixed(1) : '—';
     const pct = (d.tempo - 1) * 100;

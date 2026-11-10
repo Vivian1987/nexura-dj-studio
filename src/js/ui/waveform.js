@@ -23,6 +23,74 @@ export function colorize(wave) {
   return colors;
 }
 
+// Vídeos de YouTube: el audio no pasa por el motor (condiciones de uso), así que en lugar de la forma de
+// onda se dibuja una barra de progreso con el cursor, los hot cues y el cue; clic = saltar a ese punto
+const YT_PAD = 10;
+function ytBar(w, detail) { const pad = detail ? YT_PAD : 2; return { x0: pad, len: Math.max(1, w - pad * 2) }; }
+export function ytTimeAt(x, w, d, detail) {
+  const b = ytBar(w, detail);
+  return clamp((x - b.x0) / b.len, 0, 1) * d.duration;
+}
+function drawYouTube(ctx, w, h, d, detail) {
+  const col = DECK_COLORS[d.idx], b = ytBar(w, detail);
+  const label = detail && h >= 34;
+  const bh = detail ? Math.min(24, Math.max(10, h * 0.32)) : Math.max(6, h - 12);
+  const y = label ? Math.max(17, (h - bh) / 2 + 4) : (h - bh) / 2;
+  const xOf = (t) => b.x0 + clamp(t / d.duration, 0, 1) * b.len;
+  ctx.fillStyle = '#141d30';
+  ctx.fillRect(b.x0, y, b.len, bh);
+  if (label) {
+    ctx.font = '600 10px Inter, sans-serif'; ctx.textAlign = 'left';
+    ctx.fillStyle = '#8295b8';
+    ctx.fillText('▶ Vídeo de YouTube · sin forma de onda', b.x0 + 4, 12);
+  }
+  if (!d.duration) {
+    if (detail) {
+      ctx.fillStyle = '#5a7096'; ctx.font = '11px Inter, sans-serif'; ctx.textAlign = 'center';
+      ctx.fillText('Esperando la duración del vídeo…', w / 2, y + bh / 2 + 4);
+    }
+    return;
+  }
+  const t = d.time, px = xOf(t);
+  // parte reproducida en el color del deck; lo que queda, el mismo color muy tenue
+  ctx.fillStyle = col; ctx.globalAlpha = 0.22; ctx.fillRect(b.x0, y, b.len, bh);
+  ctx.globalAlpha = 0.85; ctx.fillRect(b.x0, y, px - b.x0, bh);
+  ctx.globalAlpha = 1;
+  if (label) {
+    // tiempo / duración a la derecha, solo si cabe junto al texto (en pantallas estrechas ya lo dan ELAPSED/REMAIN)
+    const s = `${fmtShort(t)} / ${fmtShort(d.duration)}`;
+    ctx.font = '600 10px Inter, sans-serif';
+    const lw = ctx.measureText('▶ Vídeo de YouTube · sin forma de onda').width;
+    ctx.font = '600 10px "Cascadia Mono", Consolas, monospace';
+    if (lw + ctx.measureText(s).width + 24 < b.len) {
+      ctx.textAlign = 'right'; ctx.fillStyle = '#8ea6cc';
+      ctx.fillText(s, w - b.x0 - 4, 12);
+    }
+  }
+  // hot cues: línea a lo alto de la barra y, en la vista grande, su número debajo
+  d.track.cues.forEach((c, i) => {
+    if (!c) return;
+    const x = Math.round(xOf(c.t));
+    ctx.fillStyle = c.color;
+    ctx.fillRect(x - 1, y - 3, 2, bh + 6);
+    if (detail && y + bh + 15 <= h) {
+      ctx.fillRect(x - 1, y + bh + 2, 14, 13);
+      ctx.fillStyle = '#000'; ctx.font = '700 10px Inter, sans-serif'; ctx.textAlign = 'left';
+      ctx.fillText(String(i + 1), x + 3, y + bh + 12);
+    }
+  });
+  // cue principal: triángulo blanco encima de la barra
+  const cx = xOf(d.cuePoint);
+  ctx.fillStyle = '#ffffff';
+  ctx.beginPath(); ctx.moveTo(cx - 5, y - 8); ctx.lineTo(cx + 5, y - 8); ctx.lineTo(cx, y - 1); ctx.fill();
+  // cursor; en los últimos 30 s parpadea en rojo como en las pistas locales
+  const warn = d.duration - t < 30 && d.playing && Math.floor(performance.now() / 400) % 2;
+  ctx.fillStyle = warn ? '#f04848' : '#ffffff';
+  ctx.fillRect(Math.round(px) - 1, detail ? Math.max(0, y - 10) : 0, 3, detail ? bh + 20 : h);
+  if (detail) { ctx.fillStyle = col; ctx.fillRect(4, 4, 3, h - 8); }
+}
+function fmtShort(s) { s = Math.max(0, s || 0); return `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, '0')}`; }
+
 function fitCanvas(c) {
   const dpr = window.devicePixelRatio || 1;
   const w = c.clientWidth, h = c.clientHeight;
@@ -46,22 +114,34 @@ export class WaveDetail {
   bind() {
     // Arrastrar la forma de onda = scratch / búsqueda
     let lastX = 0, dragging = false;
+    // YouTube: clic o arrastre sobre la barra de progreso = saltar a ese punto (seek del reproductor,
+    // como mucho cada 120 ms mientras se arrastra)
+    let ytAt = 0;
+    const ytSeek = (e, force) => {
+      const d = this.deck;
+      if (!d.duration || (!force && performance.now() - ytAt < 120)) return;
+      ytAt = performance.now();
+      d.seek(ytTimeAt(e.clientX - this.c.getBoundingClientRect().left, this.c.clientWidth, d, true));
+    };
     this.c.addEventListener('pointerdown', (e) => {
       if (!this.deck.track) return;
       dragging = true; lastX = e.clientX;
       this.c.setPointerCapture(e.pointerId);
-      if (this.deck.playing && !this.deck.isYT) { this.deck.vinylTemp = this.deck.vinyl; this.deck.vinyl = true; this.deck.jogTouch(true); }
+      if (this.deck.isYT) return ytSeek(e, true);
+      if (this.deck.playing) { this.deck.vinylTemp = this.deck.vinyl; this.deck.vinyl = true; this.deck.jogTouch(true); }
     });
     this.c.addEventListener('pointermove', (e) => {
       if (!dragging) return;
+      if (this.deck.isYT) return ytSeek(e, false);
       const dx = e.clientX - lastX; lastX = e.clientX;
       const secPerPx = this.zoom / this.c.clientWidth;
       if (this.deck.scratching) this.deck.scratchBySeconds(-dx * secPerPx);
       else this.deck.seek(this.deck.time - dx * secPerPx);
     });
-    const up = () => {
+    const up = (e) => {
       if (!dragging) return;
       dragging = false;
+      if (this.deck.isYT) { if (e.type === 'pointerup' && e.clientX !== lastX) ytSeek(e, true); return; }
       if (this.deck.scratching) { this.deck.jogTouch(false); if (this.deck.vinylTemp != null) { this.deck.vinyl = this.deck.vinylTemp; this.deck.vinylTemp = null; } }
     };
     this.c.addEventListener('pointerup', up);
@@ -84,6 +164,7 @@ export class WaveDetail {
       ctx.fillText(`DECK ${d.idx + 1} — arrastra una pista aquí`, w / 2, mid + 4);
       return;
     }
+    if (d.isYT) return drawYouTube(ctx, w, h, d, true);
     const t = d.time;
     const pxPerSec = w / this.zoom;
     const t0 = t - (w / 2) / pxPerSec;
@@ -117,12 +198,6 @@ export class WaveDetail {
         ctx.fillRect(x, mid - amp, 1, amp * 2);
         ctx.globalAlpha = 1;
       }
-    } else if (d.isYT) {
-      ctx.fillStyle = '#1c1616';
-      ctx.fillRect(0, mid - 14, w, 28);
-      ctx.fillStyle = '#d9534a';
-      ctx.font = '600 12px Inter, sans-serif'; ctx.textAlign = 'center';
-      ctx.fillText('▶ YouTube — reproductor oficial (sin forma de onda)', w / 2, mid + 4);
     } else {
       ctx.fillStyle = '#5a7096'; ctx.font = '12px Inter, sans-serif'; ctx.textAlign = 'center';
       ctx.fillText('Analizando…', w / 2, mid + 4);
@@ -240,7 +315,12 @@ export class WaveOverview {
     const d = this.deck;
     if (!d.track || !d.duration) return;
     const r = this.c.getBoundingClientRect();
-    if (d.playing && !this.deck.app.settings.allowSeekPlaying && !e.shiftKey) { /* permitido igualmente */ }
+    if (d.isYT) {
+      // el reproductor de YouTube no admite un seek por cada movimiento del ratón
+      if (e.type === 'pointermove' && performance.now() - (this.ytAt || 0) < 120) return;
+      this.ytAt = performance.now();
+      return d.seek(ytTimeAt(e.clientX - r.left, r.width, d, false));
+    }
     d.seek(clamp((e.clientX - r.left) / r.width, 0, 1) * d.duration);
   }
   setWave(w) { this.wave = w; this.cache = null; if (w) colorize(w); }
@@ -270,12 +350,13 @@ export class WaveOverview {
     const d = this.deck;
     ctx.fillStyle = '#070d1a';
     ctx.fillRect(0, 0, w, h);
+    if (d.track && d.isYT) return drawYouTube(ctx, w, h, d, false);
     if (!d.track || !d.duration) return;
     if (this.wave) {
       if (!this.cache || this.cache.w !== w || this.cache.h !== h) this.render(w, h);
       ctx.drawImage(this.cache.canvas, 0, 0, w, h);
     } else {
-      ctx.fillStyle = d.isYT ? '#3a1220' : '#1a2740';
+      ctx.fillStyle = '#1a2740';
       ctx.fillRect(0, h / 2 - 3, w, 6);
     }
     const px = (d.time / d.duration) * w;

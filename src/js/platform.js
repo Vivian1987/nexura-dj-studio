@@ -14,6 +14,22 @@ async function webAnonymizer() {
   if (!globalThis.nexuraAnonymize) await import('./shared/anonymize.js');
   return globalThis.nexuraAnonymize;
 }
+// Igual con shared/yt-search.js (búsqueda de YouTube y errores de la Data API) → globalThis.nexuraYtSearch
+async function webYtSearch() {
+  if (!globalThis.nexuraYtSearch) await import('./shared/yt-search.js');
+  return globalThis.nexuraYtSearch;
+}
+let webServices = null;
+async function webSearchUrl() {
+  if (window.__nexuraServices) return window.__nexuraServices.searchUrl || '';
+  if (!webServices) webServices = await fetch('config/servicios.json').then(r => r.json()).catch(() => ({}));
+  return /^https?:\/\//.test(webServices.searchUrl || '') ? webServices.searchUrl : '';
+}
+function webInstallId() {
+  let id = localStorage.getItem('nexura_instalacion_id');
+  if (!id) { id = crypto.randomUUID(); localStorage.setItem('nexura_instalacion_id', id); }
+  return id;
+}
 
 function webInfo(file) {
   const id = 'web:' + file.name + ':' + file.size;
@@ -282,11 +298,34 @@ export const platform = {
     async api(endpoint, params, apiKey) {
       if (N) return N.yt.api(endpoint, params, apiKey);
       if (!apiKey) throw new Error('Necesitas una clave de API de YouTube (Ajustes → YouTube)');
+      const { MSG, ytErrorInfo } = await webYtSearch();
       const q = new URLSearchParams({ ...params, key: apiKey });
-      const r = await fetch(`https://www.googleapis.com/youtube/v3/${endpoint}?${q}`);
-      const j = await r.json();
-      if (!r.ok) throw new Error((j.error && j.error.message) || 'Error de la API de YouTube');
+      let r;
+      try { r = await fetch(`https://www.googleapis.com/youtube/v3/${endpoint}?${q}`); } catch (_) { throw new Error(MSG.net); }
+      let j = null;
+      try { j = await r.json(); } catch (_) { j = null; }
+      if (!r.ok) throw new Error(ytErrorInfo(r.status, j).message);
       return j;
+    },
+    // Búsqueda por el servicio de NexuraIA (searchUrl de servicios.json) para quien no tiene clave propia.
+    // Devuelve { items } o { error: 'limit'|'down'|'bad'|'none', message }. En el navegador (pruebas) la
+    // dirección sale de window.__nexuraServices.searchUrl o de config/servicios.json.
+    async search(q, max) {
+      if (N && N.yt.search) return N.yt.search(q, max);
+      const { serviceSearch } = await webYtSearch();
+      try { return { items: await serviceSearch({ url: await webSearchUrl(), id: webInstallId(), q, max }) }; } catch (e) { return { error: e.code || 'down', message: e.message }; }
+    },
+    async searchAvailable() {
+      if (N) return !!((await N.info()).services || {}).search;
+      return !!(await webSearchUrl());
+    },
+    // Textos y utilidades de shared/yt-search.js (MSG, GUIDE, maskKey…)
+    texts() { return webYtSearch(); },
+    // «Comprobar clave»: { ok, code, message }
+    async checkKey(key) {
+      if (N && N.yt.checkKey) return N.yt.checkKey(key);
+      const { checkKey } = await webYtSearch();
+      return checkKey(key);
     },
     async login(id, secret) { if (N) return N.yt.login(id, secret); throw new Error('Disponible solo en la app de escritorio'); },
     async logout() { if (N) return N.yt.logout(); return true; },

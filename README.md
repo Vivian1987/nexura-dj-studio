@@ -124,7 +124,7 @@ Las controladoras que solo funcionan por HID no son compatibles.
 
 ## Privacidad
 
-Tu música, tu biblioteca y los stems se quedan en tu ordenador. Solo se envía algo si tú lo eliges: un informe o sugerencia (con vista previa, sin rutas ni nombres de canciones) o las estadísticas anónimas de uso (desactivables en Ajustes). Detalles en [`PRIVACIDAD.txt`](src/legal/PRIVACIDAD.txt) y [`LICENCIA.txt`](src/legal/LICENCIA.txt).
+Tu música, tu biblioteca y los stems se quedan en tu ordenador. Solo se envía algo si tú lo eliges: un informe o sugerencia (con vista previa, sin rutas ni nombres de canciones) o las estadísticas anónimas de uso (desactivables en Ajustes). Si buscas en YouTube sin clave propia, el servicio de NexuraIA recibe solo el texto buscado y un identificador anónimo de la instalación (para el límite diario). Detalles en [`PRIVACIDAD.txt`](src/legal/PRIVACIDAD.txt) y [`LICENCIA.txt`](src/legal/LICENCIA.txt).
 
 ## Desarrollo
 

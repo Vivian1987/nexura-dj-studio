@@ -144,7 +144,7 @@ app.whenReady().then(async () => {
     await clickText(win, '.set-tab', '/^Acerca de$/'); await wait(300);
     s = await js(win, `(() => ({ txt: document.querySelector('.set-page').textContent, links: [...document.querySelectorAll('.about-links .link')].map(a => a.textContent) }))()`);
     await shot(win, `${tag}-09-acerca-de`);
-    check('Acerca de: versión, NexuraIA, licencia, privacidad, terceros y «Enviar informe o sugerencia»', /Versión/.test(s.txt) && /NexuraIA/.test(s.txt) && s.links.join() === 'Licencia de uso,Política de privacidad,Licencias de terceros' && /Enviar informe o sugerencia/.test(s.txt), s);
+    check('Acerca de: versión, NexuraIA, licencia, privacidad, terceros y «Enviar informe o sugerencia»', /Versión/.test(s.txt) && /NexuraIA/.test(s.txt) && s.links.join() === 'Licencia de uso,Política de privacidad,Licencias de terceros,Novedades de esta versión' && /Enviar informe o sugerencia/.test(s.txt), s);
     for (const [id, re, n] of [['#about-lic', /CONTRATO DE LICENCIA/, 'licencia'], ['#about-priv', /POLÍTICA DE PRIVACIDAD/, 'privacidad'], ['#about-3p', /LICENCIAS DE TERCEROS[\s\S]*electron-updater/, 'terceros']]) {
       await click(win, id); await wait(500);
       s = await js(win, `(() => ({ t: document.querySelector('.legal-text')?.textContent || '' }))()`);
