@@ -1,6 +1,13 @@
 # Nexura DJ Studio — estado y pendientes
 
-Última actualización: 10 de noviembre de 2026 · rama `yt-tiempo` (desde main, sin commit) · versión **1.0.0-rc.2** en `package.json`. Resúmenes en `.revision/RESUMEN-rc2.md` y `.revision/RESUMEN-rc1.md`.
+Última actualización: 10 de noviembre de 2026 · rama `aviso-actualizacion` (desde main, sin commit) · versión **1.0.0-rc.2** en `package.json`. Resúmenes en `.revision/RESUMEN-aviso-actualizacion.md`, `.revision/RESUMEN-rc2.md` y `.revision/RESUMEN-rc1.md`.
+
+## 1.0.0-rc.3 (en preparación) — aviso de actualización más visible (10 nov 2026, rama `aviso-actualizacion`, sin commit)
+- Petición: el aviso «Nexura X disponible · Descargar» de la barra de estado «se ve poco».
+- Segunda petición: «o una ventana de alerta abajo a la izquierda al iniciar el programa». Ahora es una ventana ámbar de 360 px abajo a la IZQUIERDA (encima de la barra lateral de la biblioteca, sin subir nunca por encima de ella: con poco alto quita líneas de novedades), «Hay una versión nueva de Nexura», versión actual → nueva, hasta 3 líneas de las notas de la release, «Descargar ahora» / «Más tarde» (no vuelve hasta el siguiente arranque); 14 px, icono, sombra y pulso los primeros 30 s. Botón «⬆ Actualizar» en la barra superior junto a «?». Estados: descargando (barra ámbar), lista (verde, con pulso) y «Se instalará al cerrar Nexura». Nada de animación con «reducir movimiento» de Windows.
+- `NOVEDADES.md` tiene ya la sección «1.0.0-rc.3 · en preparación»: al subir la versión a rc.3, quitar «en preparación» del título (lo exige `tools/test-novedades.mjs`).
+- Ojo: el aviso lo dibuja la versión **instalada**. Quien tenga la rc.2 verá el aviso antiguo (discreto) al salir la rc.3; el nuevo se verá a partir de la siguiente (rc.3 → rc.4/1.0.0).
+- Por probar a mano: una actualización real desde una app con la rc.3 instalada (ventana, novedades reales de la release de GitHub, botón de arriba, descarga, reinicio y «al cerrar» con música). Escribir las notas de la release con las 2-3 primeras líneas pensadas para el aviso.
 
 ## 1.0.0-rc.2 — versión pequeña para probar las actualizaciones desde la rc1 (10 nov 2026, sin commit)
 - **Datos del responsable** en la licencia y la privacidad (Miguel Contreras Gallardo, NIF, domicilio en Getafe); la privacidad (v1.1) explica la búsqueda de YouTube sin clave.

@@ -7,16 +7,29 @@
 
 const EVERY = 6 * 60 * 60 * 1000;
 
+// Novedades de la release (GitHub da HTML o, con varias versiones, [{version, note}]) → hasta 3 líneas de texto
+// plano de ≤ 140 caracteres para la ventana de aviso; sin notas, [].
+function notesText(rel, max = 3) {
+  if (!rel) return [];
+  const html = Array.isArray(rel) ? rel.map(r => (r && r.note) || '').join('\n') : String(rel);
+  const ent = { amp: '&', lt: '<', gt: '>', quot: '"', '#39': "'", nbsp: ' ' };
+  return html.replace(/<\/(p|li|h\d|div)>|<br\s*\/?>/gi, '\n').replace(/<[^>]+>/g, '')
+    .replace(/&(amp|lt|gt|quot|#39|nbsp);/g, (_m, k) => ent[k])
+    .split(/\r?\n/).map(l => l.replace(/^\s*(#+|[-*•]|\d+\.)\s*/, '').replace(/\*\*|__|`/g, '').replace(/\s+/g, ' ').trim())
+    .filter(l => l && !/^(novedades|what'?s changed|changelog|full changelog)\b/i.test(l))
+    .slice(0, max).map(l => l.length > 140 ? l.slice(0, 139).trimEnd() + '…' : l);
+}
+
 function createUpdater({ autoUpdater, send = () => {}, log = () => {}, beforeInstall = async () => {}, enabled = true, setTimer = setTimeout, setRepeat = setInterval }) {
-  const st = { state: enabled ? 'idle' : 'disabled', version: '', percent: 0, manual: false, auto: true, prerelease: false };
+  const st = { state: enabled ? 'idle' : 'disabled', version: '', percent: 0, notes: [], manual: false, auto: true, prerelease: false };
   let started = false, repeat = null;
-  const emit = () => send({ state: st.state, version: st.version, percent: st.percent });
+  const emit = () => send({ state: st.state, version: st.version, percent: st.percent, notes: st.notes });
 
   if (enabled && autoUpdater) {
     autoUpdater.autoDownload = false;          // descargar solo cuando el usuario pulsa «Descargar»
     autoUpdater.autoInstallOnAppQuit = true;   // descargada y sin reiniciar: se instala al cerrar la app
     autoUpdater.logger = null;
-    autoUpdater.on('update-available', (info) => { st.state = 'available'; st.version = (info && info.version) || ''; emit(); });
+    autoUpdater.on('update-available', (info) => { st.state = 'available'; st.version = (info && info.version) || ''; st.notes = notesText(info && info.releaseNotes); emit(); });
     autoUpdater.on('update-not-available', () => { if (st.state === 'checking') st.state = 'idle'; if (st.manual) send({ state: 'none' }); });
     autoUpdater.on('download-progress', (p) => { st.state = 'downloading'; st.percent = Math.round((p && p.percent) || 0); emit(); });
     autoUpdater.on('update-downloaded', async (info) => {
@@ -83,4 +96,4 @@ function createUpdater({ autoUpdater, send = () => {}, log = () => {}, beforeIns
   return { check, configure, download, install, status: () => ({ ...st }), stop: () => repeat && clearInterval(repeat) };
 }
 
-module.exports = { createUpdater, EVERY };
+module.exports = { createUpdater, notesText, EVERY };
