@@ -1,0 +1,6 @@
+{
+  "_info": "Identidad de la app en Microsoft Store (Partner Center → tu app → Gestión de productos → Identidad del producto). Rellena identityName (Package/Identity/Name, p. ej. 12345NexuraIA.NexuraDJStudio) y publisher (Package/Identity/Publisher, p. ej. CN=XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX). También valen las variables de entorno STORE_IDENTITY_NAME y STORE_PUBLISHER.",
+  "identityName": "",
+  "publisher": "",
+  "publisherDisplayName": "NexuraIA"
+}

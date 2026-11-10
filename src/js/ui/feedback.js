@@ -1,129 +1,120 @@
-// Sugerencias y reportes de la beta
-// Los testers describen un error o una idea; se añade (si lo aceptan) la
-// información del sistema y los últimos errores de la app. Se envía directamente
-// al correo de NexuraIA (vía FormSubmit desde el proceso principal) o, si hay un
-// webhook configurado (p. ej. n8n), a ese webhook. Sin conexión, queda en cola.
+// Informe de errores y sugerencias + registro técnico de la interfaz.
+// - Registro: errores de JS no capturados, promesas rechazadas, console.error/warn (audio, MIDI, análisis,
+//   stems…) y avisos de la app van al registro local rotativo del proceso principal (<datos>\logs).
+// - «Enviar informe o sugerencia»: tipo, texto, email opcional y «Adjuntar registro técnico» (enseña antes
+//   exactamente qué se envía: versión, Windows, controladora, decks y las últimas 200 líneas del registro,
+//   sin rutas ni canciones). Lo envía el proceso principal a «feedbackUrl» de src/config/servicios.json;
+//   si está vacío o falla, abre el correo a contacto@nexuraia.com y guarda el informe en un .txt.
 import { el, toast } from '../util.js';
-import { btn, select } from './controls.js';
+import { select } from './controls.js';
 import { platform } from '../platform.js';
 
 export const FEEDBACK_EMAIL = 'contacto@nexuraia.com';
-const CATEGORIES = { error: 'Error / algo no funciona', idea: 'Sugerencia / nueva función', design: 'Diseño / interfaz', other: 'Otro' };
+const KINDS = { error: 'Error', idea: 'Sugerencia', other: 'Otro' };
 
 export class Feedback {
   constructor(app) {
     this.app = app;
-    this.errors = [];
-    window.addEventListener('error', (e) => this.log((e.message || 'Error') + (e.filename ? ` (${e.filename.split('/').pop()}:${e.lineno})` : '')));
-    window.addEventListener('unhandledrejection', (e) => this.log('Promesa rechazada: ' + ((e.reason && (e.reason.message || e.reason)) || '')));
-    window.addEventListener('online', () => this.flushQueue());
+    this.pending = [];
+    this.flushSoon = null;
+    window.addEventListener('error', (e) => this.log('ERROR', 'js', (e.message || 'Error') + (e.filename ? ` (${e.filename.split('/').pop()}:${e.lineno}:${e.colno})` : '') + (e.error && e.error.stack ? ' ' + String(e.error.stack).split('\n').slice(1, 4).join(' ') : '')));
+    window.addEventListener('unhandledrejection', (e) => this.log('ERROR', 'promesa', 'Promesa rechazada: ' + ((e.reason && (e.reason.stack || e.reason.message)) || e.reason || '')));
+    // console.error / console.warn de toda la app (automix, análisis, stems, MIDI, audio…) también al registro
+    for (const [fn, level] of [['error', 'ERROR'], ['warn', 'WARN']]) {
+      const orig = console[fn].bind(console);
+      console[fn] = (...args) => { orig(...args); this.log(level, 'consola', args.map(a => (a instanceof Error ? (a.stack || a.message) : typeof a === 'object' ? safeJson(a) : String(a))).join(' ')); };
+    }
   }
 
-  // Envío directo al correo de NexuraIA (o al webhook si se ha configurado)
-  async send(payload) {
-    const webhook = (this.app.settings.feedbackWebhook || '').trim();
-    if (webhook) return platform.postFeedback(webhook, payload);
-    return platform.sendFeedback(payload);
+  // Línea del registro (se envían por lotes al proceso principal)
+  log(level, source, msg) {
+    this.pending.push({ level, source, msg: String(msg).slice(0, 2000) });
+    if (this.pending.length > 100) this.pending.splice(0, this.pending.length - 100);
+    if (!this.flushSoon) this.flushSoon = setTimeout(() => { this.flushSoon = null; const l = this.pending.splice(0); if (l.length) platform.log(l); }, 500);
   }
 
-  // Sugerencias que no se pudieron enviar (sin conexión): se reintentan al abrir la app
+  // Sugerencias que quedaron en cola en la beta (sin conexión): se intentan enviar una vez y se olvidan
   async flushQueue() {
     const q = (this.app.settings.feedbackQueue || []).slice();
-    if (!q.length || this.flushing) return;
-    this.flushing = true;
-    const left = [];
-    for (const p of q) { try { await this.send(p); } catch (_) { left.push(p); } }
-    this.app.setSetting('feedbackQueue', left);
-    this.flushing = false;
-    if (left.length < q.length) toast(`Se han enviado ${q.length - left.length} sugerencia(s) pendiente(s). ¡Gracias!`, 'ok', 5000);
+    if (!q.length) return;
+    let sent = 0;
+    for (const p of q) { try { if ((await platform.report.send({ legacy: p })).ok) sent++; } catch (_) { /* sin red: silencio */ } }
+    this.app.setSetting('feedbackQueue', []);
+    if (sent) toast(`Se han enviado ${sent} sugerencia(s) pendiente(s). ¡Gracias!`, 'ok', 5000);
   }
 
-  log(msg) {
-    this.errors.push(`${new Date().toLocaleTimeString('es-ES')} ${String(msg).slice(0, 300)}`);
-    if (this.errors.length > 20) this.errors.shift();
+  // Lo que la app sabe de la sesión (sin datos personales)
+  context() {
+    const a = this.app;
+    return { controller: a.midi?.controllerName || '', decks: a.deckCount === 4 ? 4 : 2 };
   }
-
-  systemInfo() {
-    const a = this.app, i = a.info || {};
-    return [
-      `Versión: ${i.version || '—'}`,
-      `Sistema: ${i.os || i.platform || navigator.userAgent}`,
-      `Electron: ${i.electron || '—'}`,
-      `Pantalla: ${screen.width}×${screen.height} · ventana ${innerWidth}×${innerHeight} · escala ${devicePixelRatio}`,
-      `Audio: ${a.outputDesc || a.engine?.outputMode || '—'} · ${a.engine?.ctx?.sampleRate || '—'} Hz`,
-      `Controlador: ${a.midi?.controllerName || 'ninguno'}`,
-      `Forma de onda: ${a.waveLayout === 'deck' ? 'en deck' : 'superior'} · modo laptop: ${document.body.classList.contains('laptop-mode') ? 'sí' : 'no'}`,
-      `Pistas en la biblioteca: ${a.library?.tracks?.size ?? '—'}`
-    ].join('\n');
-  }
-
-  compose({ cat, text, contact, withInfo }) {
-    const version = this.app.info?.version || '';
-    const first = text.split('\n')[0].slice(0, 60);
-    const subject = `[Nexura DJ Studio ${version}] ${CATEGORIES[cat]}${first ? ': ' + first : ''}`;
-    let body = `${text}\n\n`;
-    if (contact) body += `Contacto: ${contact}\n\n`;
-    if (withInfo) {
-      body += `--- Información del equipo ---\n${this.systemInfo()}\n`;
-      if (this.errors.length) body += `\n--- Últimos errores ---\n${this.errors.join('\n')}\n`;
+  // Títulos, artistas, nombres de archivo y de crates: se quitan del registro antes de enviarlo
+  knownNames() {
+    const L = this.app.library, out = [];
+    if (!L) return out;
+    for (const t of L.tracks.values()) {
+      out.push(t.title, t.artist, t.album);
+      const f = String(t.path || '').split(/[\\/]/).pop();
+      if (f && t.source !== 'youtube') out.push(f, f.replace(/\.[^.]+$/, ''));
     }
-    return { subject, body };
+    for (const c of L.crates) out.push(c.name);
+    for (const p of L.ytPlaylists || []) out.push(p.title || p.name);
+    return out.filter(x => x && String(x).length >= 4).slice(0, 60000);
+  }
+
+  techText(t) {
+    return [`Versión: ${t.version}`, `Sistema: ${t.os}`, `Controladora MIDI: ${t.controller}`, `Decks: ${t.decks}`,
+      `Últimas ${t.log.length} líneas del registro:`, ...(t.log.length ? t.log : ['(vacío)'])].join('\n');
   }
 
   async open(preset = 'idea') {
     const app = this.app;
-    const cat = select(CATEGORIES, preset, () => {}, 'wide');
-    cat.id = 'fb-cat';
+    const kind = select(KINDS, KINDS[preset] ? preset : 'idea', () => {}, 'wide');
+    kind.id = 'fb-kind';
     const text = el('textarea', { id: 'fb-text', class: 'wide fb-text', rows: 7, placeholder: 'Cuéntanos qué pasó o qué te gustaría. Si es un error: qué estabas haciendo, qué esperabas y qué ocurrió.' });
-    const contact = el('input', { id: 'fb-contact', class: 'wide', placeholder: 'Tu email o teléfono (opcional, por si necesitamos más detalles)' });
-    const withInfo = el('input', { id: 'fb-info', type: 'checkbox', class: 'switch' });
-    withInfo.checked = true;
-    const preview = el('pre', { class: 'fb-preview' }, this.systemInfo() + (this.errors.length ? `\n\nÚltimos errores (${this.errors.length}):\n${this.errors.slice(-5).join('\n')}` : ''));
-    const body = el('div', { class: 'form fb-form' },
-      el('p', { class: 'hint' }, 'Esta es una versión demo de Nexura DJ Studio. Tus sugerencias nos ayudan a mejorarla.'),
-      el('label', { class: 'frm', for: 'fb-cat' }, el('span', {}, 'Tipo'), cat),
-      el('label', { class: 'frm', for: 'fb-text' }, el('span', {}, 'Mensaje'), text),
-      el('label', { class: 'frm', for: 'fb-contact' }, el('span', {}, 'Tu nombre o contacto (opcional)'), contact),
-      el('label', { class: 'fb-check', for: 'fb-info' }, withInfo, el('span', {}, 'Incluir información del equipo y errores recientes (no incluye tu música ni tus archivos)')),
-      preview,
-      el('p', { class: 'hint' }, 'Al pulsar «Enviar», el mensaje llega directamente al equipo de NexuraIA.'));
-    withInfo.addEventListener('change', () => { preview.hidden = !withInfo.checked; });
-
-    const choice = await app.modal('Enviar sugerencias', body, ['Cancelar', 'Enviar']);
-    if (choice !== 1) return;
-    const msg = text.value.trim();
-    if (!msg) { toast('Escribe un mensaje antes de enviarlo.', 'warn'); return this.open(cat.value); }
-    const who = contact.value.trim();
-    const { subject } = this.compose({ cat: cat.value, text: msg, contact: who, withInfo: withInfo.checked });
-    const payload = {
-      subject, category: CATEGORIES[cat.value], message: msg, contact: who,
-      version: app.info?.version || '', system: withInfo.checked ? this.systemInfo() : '',
-      errors: withInfo.checked ? this.errors.join('\n') : '', date: new Date().toLocaleString('es-ES')
+    const email = el('input', { id: 'fb-email', class: 'wide', type: 'email', autocomplete: 'email', placeholder: 'tu@email.com (opcional, solo para responderte)' });
+    const attach = el('input', { id: 'fb-attach', type: 'checkbox', class: 'switch' });
+    attach.checked = true;
+    const preview = el('pre', { class: 'fb-preview', id: 'fb-preview', tabindex: 0 }, 'Preparando…');
+    const known = this.knownNames();
+    const ctx = this.context();
+    const loadPreview = async () => {
+      try { preview.textContent = this.techText(await platform.report.preview({ ...ctx, known })); }
+      catch (e) { preview.textContent = 'No se pudo leer el registro: ' + e.message; }
     };
-    toast('Enviando…', 'info', 2000);
-    try {
-      await this.send(payload);
-      toast('¡Gracias! Tu sugerencia se ha enviado a NexuraIA.', 'ok', 5000);
-    } catch (e) {
-      app.setSetting('feedbackQueue', [...(app.settings.feedbackQueue || []), payload]);
-      toast('No hay conexión ahora mismo. Tu sugerencia se enviará automáticamente más tarde.', 'warn', 7000);
-    }
-  }
-
-  // Bienvenida de la beta (solo la primera vez)
-  async welcome() {
-    const app = this.app;
-    if (!app.info?.isBeta || app.settings.betaWelcomeSeen === app.info.version) return;
+    loadPreview();
+    const box = el('div', { class: 'fb-attach-box' },
+      el('label', { class: 'fb-check', for: 'fb-attach' }, attach, el('span', {}, 'Adjuntar registro técnico')),
+      el('p', { class: 'hint' }, 'Se adjunta exactamente lo que ves abajo: versión, Windows, controladora MIDI conectada y las últimas 200 líneas del registro de la app. Las rutas de archivos, los nombres de canciones, artistas y crates y los correos se sustituyen por <ruta>, <pista>, «…» o <email>.'),
+      preview);
+    attach.addEventListener('change', () => { preview.hidden = !attach.checked; });
     const body = el('div', { class: 'form fb-form' },
-      el('p', {}, `Gracias por probar la versión ${app.info.version} de Nexura DJ Studio.`),
-      el('ul', { class: 'fb-list' },
-        el('li', {}, 'Arrastra música (MP3, WAV, FLAC…) a la biblioteca o pulsa «+ Añadir música» en la barra lateral.'),
-        el('li', {}, 'Haz doble clic en una pista para cargarla en un deck.'),
-        el('li', {}, 'Conecta tu controladora MIDI por USB; si no se reconoce sola, configúrala en Ajustes → MIDI con «Añadir controladora». También puedes usar teclado y ratón.'),
-        el('li', {}, 'Importa listas de YouTube o Spotify con «+ Importar» en LISTAS ONLINE de la barra lateral.')),
-      el('p', { class: 'hint' }, 'Es una versión de prueba: puede haber errores. Con el botón «💬 SUGERENCIAS» de la barra superior puedes enviarnos cualquier problema o idea en un minuto.'));
-    const r = await app.modal('Bienvenido a la beta', body, ['Enviar una sugerencia', 'Empezar']);
-    app.setSetting('betaWelcomeSeen', app.info.version);
-    if (r === 0) this.open();
+      el('label', { class: 'frm', for: 'fb-kind' }, el('span', {}, 'Tipo'), kind),
+      el('label', { class: 'frm', for: 'fb-text' }, el('span', {}, 'Mensaje'), text),
+      el('label', { class: 'frm', for: 'fb-email' }, el('span', {}, 'Email (opcional)'), email),
+      box,
+      el('p', { class: 'hint' }, `Lo recibe el equipo de NexuraIA (${FEEDBACK_EMAIL}). Más información en Ajustes → Acerca de → Privacidad.`));
+
+    const choice = await app.modal('Enviar informe o sugerencia', body, ['Cancelar', 'Enviar']);
+    if (choice !== 1) return null;
+    const msg = text.value.trim();
+    if (!msg) { toast('Escribe un mensaje antes de enviarlo.', 'warn'); return this.open(kind.value); }
+    const mail = email.value.trim();
+    if (mail && !/^[^@\s]+@[^@\s]+\.[^@\s]{2,}$/.test(mail)) toast('El email no parece válido: se envía sin él.', 'warn', 4000);
+    toast('Enviando…', 'info', 2000);
+    let r;
+    try { r = await platform.report.send({ kind: kind.value, text: msg, email: mail, attach: attach.checked, ...ctx, known }); }
+    catch (e) { r = { ok: false, via: 'error', error: e.message }; }
+    if (r && r.ok) { toast('¡Gracias! Tu mensaje ha llegado a NexuraIA.', 'ok', 5000); return r; }
+    const info = el('div', { class: 'form fb-form' },
+      el('p', {}, 'No se ha podido enviar directamente (sin conexión o servicio no disponible).'),
+      el('p', {}, `Se ha abierto tu programa de correo con el mensaje para ${FEEDBACK_EMAIL}. Si no se abre, escríbenos a esa dirección.`),
+      r && r.file ? el('p', { class: 'hint' }, 'El informe completo, con el registro técnico, está guardado en este archivo. Adjúntalo al correo, por favor:') : null,
+      r && r.file ? el('pre', { class: 'fb-preview fb-path' }, r.file) : null);
+    const c = await app.modal('Enviar por correo', info, r && r.file ? ['Cerrar', 'Mostrar el archivo'] : ['Cerrar']);
+    if (c === 1 && r.file) platform.showItem(r.file);
+    return r;
   }
 }
+
+function safeJson(o) { try { return JSON.stringify(o).slice(0, 500); } catch (_) { return String(o); } }

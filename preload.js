@@ -27,8 +27,30 @@ contextBridge.exposeInMainWorld('nexura', {
   saveRecording: (data, name) => ipcRenderer.invoke('rec:save', data, name),
   showItem: (p) => ipcRenderer.invoke('shell:showItem', p),
   openExternal: (url) => ipcRenderer.invoke('shell:openExternal', url),
-  sendFeedback: (payload) => ipcRenderer.invoke('feedback:email', payload),
-  postFeedback: (url, payload) => ipcRenderer.invoke('feedback:post', url, payload),
+  log: (lines) => ipcRenderer.send('log:write', lines),
+  openLogFolder: () => ipcRenderer.invoke('log:openFolder'),
+  report: {
+    preview: (info) => ipcRenderer.invoke('report:preview', info),
+    send: (info) => ipcRenderer.invoke('report:send', info)
+  },
+  backup: {
+    list: () => ipcRenderer.invoke('backup:list'),
+    create: () => ipcRenderer.invoke('backup:create'),
+    restore: (name) => ipcRenderer.invoke('backup:restore', name),
+    openFolder: () => ipcRenderer.invoke('backup:openFolder')
+  },
+  stats: {
+    send: (info) => ipcRenderer.invoke('stats:send', info),
+    preview: (info) => ipcRenderer.invoke('stats:preview', info)
+  },
+  updates: {
+    configure: (cfg) => ipcRenderer.invoke('update:configure', cfg),
+    check: () => ipcRenderer.invoke('update:check'),
+    download: () => ipcRenderer.invoke('update:download'),
+    install: () => ipcRenderer.invoke('update:install'),
+    status: () => ipcRenderer.invoke('update:status'),
+    onEvent: (fn) => { const h = (_e, ev) => fn(ev); ipcRenderer.on('update:event', h); return () => ipcRenderer.removeListener('update:event', h); }
+  },
   stems: {
     info: (dir) => ipcRenderer.invoke('stems:info', dir),
     status: (ids, dir) => ipcRenderer.invoke('stems:status', ids, dir),

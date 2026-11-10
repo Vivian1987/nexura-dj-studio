@@ -1,7 +1,7 @@
 {
   "name": "nexura-dj-studio",
   "productName": "Nexura DJ Studio",
-  "version": "0.9.0-beta.8",
+  "version": "1.0.0-rc.1",
   "description": "Nexura DJ Studio — software DJ de NexuraIA compatible con controladoras MIDI y listas de YouTube",
   "main": "main.js",
   "author": "NexuraIA <contacto@nexuraia.com>",
@@ -10,10 +10,14 @@
   "scripts": {
     "start": "electron .",
     "dev": "electron . --dev",
-    "dist": "electron-builder --win nsis",
+    "legal": "node tools/legal.js",
+    "dist": "node tools/legal.js && electron-builder --win nsis",
     "dist:dir": "electron-builder --win dir",
     "web": "node tools/serve.js",
-    "beta": "electron-builder --win nsis --x64 && node tools/package-beta.js"
+    "beta": "node tools/legal.js && electron-builder --win nsis --x64 && node tools/package-beta.js",
+    "release": "node tools/legal.js && electron-builder --win nsis --x64 --publish always",
+    "store:icons": "electron tools/store-icons.cjs",
+    "store": "node tools/legal.js && node tools/store.js"
   },
   "devDependencies": {
     "electron": "^33.2.0",
@@ -31,6 +35,7 @@
       "main.js",
       "preload.js",
       "config.local.json",
+      "main/**/*",
       "src/**/*",
       "build/icon.png",
       "!src/**/*.map"
@@ -57,7 +62,8 @@
       "uninstallDisplayName": "Nexura DJ Studio",
       "runAfterFinish": true,
       "deleteAppDataOnUninstall": false,
-      "include": "build/installer.nsh"
+      "include": "build/installer.nsh",
+      "license": "src/legal/LICENCIA.txt"
     },
     "extraResources": [
       {
@@ -67,7 +73,36 @@
           "pyproject.toml",
           "separate.py"
         ]
+      },
+      {
+        "from": "src/legal",
+        "to": "legal",
+        "filter": [
+          "*.txt"
+        ]
       }
-    ]
+    ],
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "mcontrerasdevpro",
+        "repo": "nexura-dj-studio",
+        "releaseType": "draft"
+      }
+    ],
+    "appx": {
+      "displayName": "Nexura DJ Studio",
+      "publisherDisplayName": "NexuraIA",
+      "applicationId": "NexuraDJStudio",
+      "backgroundColor": "#070b14",
+      "languages": [
+        "es-ES"
+      ],
+      "showNameOnTiles": true,
+      "artifactName": "Nexura-DJ-Studio-${version}.${ext}"
+    }
+  },
+  "dependencies": {
+    "electron-updater": "^6.8.11"
   }
 }

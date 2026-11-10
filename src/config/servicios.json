@@ -1,0 +1,5 @@
+{
+  "_info": "Direcciones de los servicios de NexuraIA. Vacío = desactivado. feedbackUrl: POST JSON con los informes y sugerencias. statsUrl: POST JSON con el contador anónimo (como mucho una vez al día y solo si el usuario lo permite).",
+  "feedbackUrl": "",
+  "statsUrl": ""
+}

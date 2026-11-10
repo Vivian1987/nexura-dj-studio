@@ -1,0 +1,42 @@
+﻿NEXURA DJ STUDIO — POLÍTICA DE PRIVACIDAD
+Versión 1.0 · noviembre de 2026
+
+Responsable: NexuraIA ([COMPLETAR: nombre o razón social, NIF y domicilio])
+Contacto para cualquier cuestión de privacidad: contacto@nexuraia.com
+
+Resumen: Nexura DJ Studio funciona en tu ordenador. Tu música, tu biblioteca y tus ajustes no salen de él. Solo se envía algo a Internet si tú lo pides o lo permites, y aquí se explica exactamente qué.
+
+1. QUÉ SE GUARDA EN TU ORDENADOR (no se envía a nadie)
+Todo se guarda en la carpeta de datos de la app (%APPDATA%\Nexura DJ Studio):
+- Biblioteca: rutas de tus archivos de música, etiquetas, análisis (BPM, tonalidad, forma de onda), hot cues, loops, beatgrid, crates, Prepare e historial de sesiones.
+- Ajustes de la app y de tus controladoras MIDI.
+- Copias de seguridad automáticas de la biblioteca (carpeta «copias», las 14 últimas).
+- Registro técnico de errores (carpeta «logs», 5 archivos de 1 MB como mucho).
+- Si conectas tu cuenta de Google o de Spotify: las claves de sesión, cifradas con el sistema de Windows.
+- Los stems que separes y las grabaciones que hagas.
+Puedes borrar todo esto desinstalando la app y eliminando esa carpeta.
+
+2. QUÉ SE ENVÍA, SOLO SI TÚ LO PERMITES O LO PIDES
+
+a) Estadísticas anónimas de uso (opcional; Ajustes → General → «Enviar estadísticas anónimas de uso»).
+Como mucho una vez al día se envía SOLO: un identificador aleatorio de la instalación (generado en tu equipo, sin relación con tu nombre, tu cuenta ni tu equipo), la versión de la app, el idioma, si es Windows 10 u 11, el número de decks que usas (2 o 4) y si hay una controladora conectada (sí/no, sin el modelo). Nunca tu música, nombres de archivos, canciones ni datos personales. Sirve únicamente para saber cuánta gente usa la app y con qué versiones. Base legal: tu consentimiento, que puedes retirar desactivando la opción.
+
+b) Informes de errores y sugerencias (solo cuando pulsas «Enviar»).
+Se envía el tipo y el texto que escribes, tu email si lo indicas (solo para responderte) y, si marcas «Adjuntar registro técnico», la versión, Windows, la controladora MIDI conectada y las últimas 200 líneas del registro, sin rutas de archivos, nombres de canciones, artistas ni correos (se sustituyen antes de enviarlo; puedes ver exactamente qué se envía antes de pulsar). Si no se puede enviar, se abre tu programa de correo y el informe se guarda en un archivo de texto que decides tú si adjuntar. Base legal: tu consentimiento al enviarlo.
+
+c) Actualizaciones (Ajustes → General → «Buscar actualizaciones automáticamente»).
+La app consulta las versiones publicadas en GitHub (GitHub, Inc.). Como en cualquier descarga, GitHub recibe tu dirección IP y la versión que se descarga; NexuraIA no recibe nada.
+
+d) Servicios que usas tú expresamente: al reproducir vídeos de YouTube o importar listas de Spotify, la app se conecta con esos servicios, que tratan tus datos según sus propias políticas (Google y Spotify). Lo mismo con el asistente de IA si configuras Ollama (funciona en tu propio equipo).
+
+3. CONSERVACIÓN Y DESTINATARIOS
+Los informes y sugerencias se conservan mientras sean útiles para resolver el problema o la propuesta, y como máximo 2 años. Las estadísticas se guardan de forma agregada. Para recibirlos, NexuraIA puede usar proveedores de alojamiento y automatización que actúan como encargados del tratamiento. No vendemos ni cedemos tus datos.
+
+4. TUS DERECHOS
+Puedes pedir el acceso, la rectificación, la supresión, la oposición, la limitación o la portabilidad de tus datos escribiendo a contacto@nexuraia.com. Para las estadísticas anónimas, indícanos el identificador de instalación si quieres que borremos sus registros. Si crees que no hemos atendido bien tu solicitud, puedes reclamar ante la Agencia Española de Protección de Datos (www.aepd.es).
+
+5. MENORES
+La app no está dirigida a menores de 14 años ni recoge datos de ellos a sabiendas.
+
+6. CAMBIOS
+Si esta política cambia, se indicará en la app y en nexuraia.com con la fecha de la nueva versión.

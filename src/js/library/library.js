@@ -31,7 +31,7 @@ const PROTECTED = {
   remove: 'borrar pistas', crate: 'crear, borrar, renombrar u ordenar crates', crateTracks: 'añadir o quitar pistas de las crates',
   smart: 'crear, editar o borrar smart crates', tags: 'editar etiquetas ni valoraciones', grid: 'cambiar el BPM ni el beatgrid'
 };
-export const CRATE_SORTS = { custom: 'Personalizado (arrastrar)', alpha: 'Alfabético', created: 'Fecha de creación' };
+export const CRATE_SORTS = { created: 'Como se crearon', alpha: 'Por nombre (A → Z)', custom: 'Personalizado (arrastrar)' };
 
 export class Library extends Emitter {
   constructor() {

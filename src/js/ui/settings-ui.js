@@ -4,11 +4,16 @@ import { btn, select } from './controls.js';
 import { describeKey, REL_NAMES } from '../midi/midi.js';
 import { parseMixxxMapping } from '../midi/mixxx-import.js';
 import { MidiWizard } from './midi-wizard.js';
+import { platform } from '../platform.js';
+import { STATS_FIELDS_TEXT } from './legal-ui.js';
+import { CRATE_SORTS } from '../library/library.js';
 
-const TABS = { audio: 'Audio', ai: '✨ IA', play: 'Reproducción', library: 'Biblioteca', midi: 'MIDI / Controladores', expansions: 'Expansiones', youtube: 'YouTube', spotify: 'Spotify', keys: 'Atajos', about: 'Acerca de' };
+const TABS = { general: 'General', audio: 'Audio', ai: '✨ IA', play: 'Reproducción', library: 'Biblioteca', midi: 'MIDI / Controladores', expansions: 'Expansiones', youtube: 'YouTube', spotify: 'Spotify', keys: 'Atajos', about: 'Acerca de' };
+const fmtSize = (b) => (b >= 1048576 ? (b / 1048576).toFixed(1).replace('.', ',') + ' MB' : Math.max(1, Math.round(b / 1024)) + ' KB');
+const BACKUP_REASONS = { auto: 'Automática', manual: 'Manual', actualizacion: 'Antes de actualizar', 'antes-de-restaurar': 'Antes de restaurar' };
 
 export class SettingsUI {
-  constructor(app) { this.app = app; this.tab = 'audio'; }
+  constructor(app) { this.app = app; this.tab = 'general'; }
 
   open(tab) {
     if (tab) this.tab = tab;
@@ -49,6 +54,31 @@ export class SettingsUI {
     const i = el('input', { type: 'number', min, max, step, value: this.app.settings[key], class: 'num-in' });
     i.addEventListener('change', () => this.app.setSetting(key, parseFloat(i.value)));
     return i;
+  }
+
+  page_general(p) {
+    const app = this.app, s = app.settings, info = app.info || {};
+    const updState = el('small', { id: 'set-upd-state' }, app.updatesUI?.available ? `Versión instalada: ${info.version}` : 'Solo en la app instalada con el instalador (no en la Microsoft Store, que actualiza ella misma, ni en modo navegador).');
+    const checkNow = btn('Buscar ahora', { cls: 'small', onClick: () => app.updatesUI.checkNow((msg) => { updState.textContent = msg; }) });
+    checkNow.id = 'set-upd-check';
+    const statsT = el('input', { type: 'checkbox', class: 'switch', id: 'set-stats' });
+    statsT.checked = s.statsEnabled === true;
+    statsT.addEventListener('change', () => { app.setSetting('statsEnabled', statsT.checked); if (statsT.checked) app.sendStatsSoon(); });
+    const preview = el('pre', { class: 'fb-preview', id: 'set-stats-preview' }, '…');
+    platform.stats.preview({ decks: app.deckCount, controller: !!app.midi?.controllerName })
+      .then(j => { preview.textContent = JSON.stringify({ ...j, id: '(identificador aleatorio de esta instalación)' }, null, 2); })
+      .catch(() => { preview.textContent = '—'; });
+    p.append(...[
+      el('h3', {}, 'Actualizaciones'),
+      this.row('Buscar actualizaciones automáticamente', this.toggle('autoUpdate'), 'Al abrir la app y cada 6 horas, en segundo plano. Si hay una versión nueva verás un aviso abajo; tú decides cuándo descargarla. Nunca se reinicia con música sonando: en ese caso se instala al cerrar'),
+      this.row('Recibir versiones de prueba', this.toggle('prereleaseUpdates'), 'Ofrece también versiones -rc y -beta (pueden tener errores)'),
+      this.row(checkNow, updState),
+      el('h3', {}, 'Estadísticas anónimas'),
+      this.row('Enviar estadísticas anónimas de uso', statsT, 'Como mucho una vez al día y solo esto: ' + STATS_FIELDS_TEXT + ' Nunca tu música, tus archivos ni datos personales'),
+      el('p', { class: 'hint' }, 'Esto es exactamente lo que se envía:'), preview,
+      info.services && !info.services.stats ? el('p', { class: 'set-note' }, 'En esta versión el contador todavía no tiene servidor: aunque lo actives, no se envía nada.') : null,
+      el('h3', {}, 'Bienvenida'),
+      this.row('Pantalla de bienvenida', btn('Ver bienvenida', { cls: 'small', onClick: () => { this.app.closeModal(); this.app.welcome.open(); } }), 'Los primeros pasos: añadir música, conectar la controladora y privacidad')].filter(Boolean));
   }
 
   async page_audio(p) {
@@ -164,10 +194,56 @@ export class SettingsUI {
       this.row('Mismas columnas en todos los crates', this.toggle('libColsSame'), 'Si lo desactivas, cada crate recuerda sus columnas (clic derecho en la cabecera de la tabla para elegirlas)'),
       this.row('Tamaño de la carátula', select({ small: 'Pequeña', medium: 'Mediana' }, s.libArtSize || 'small', (v) => app.setSetting('libArtSize', v)), 'La columna «Carátula» está oculta por defecto'),
       this.row('Barra de iconos en la biblioteca', select({ auto: 'Automática', on: 'Siempre', off: 'Nunca' }, s.libRail || 'auto', (v) => app.setSetting('libRail', v)), 'Columna de iconos (Todas, IA, Prepare, Crates, Smart, YouTube, Spotify, Historial) junto al árbol. Automática: en modo laptop y con la ventana de 1100 px de ancho o menos. También con el botón pequeño junto al buscador de la barra lateral'),
-      this.row('Orden de las crates', select({ custom: 'Personalizado (arrastrar)', alpha: 'Alfabético', created: 'Fecha de creación' }, s.crateSort || 'custom', (v) => { app.setSetting('crateSort', v); app.libraryUI.renderSide(); }), 'Se aplica dentro de cada nivel de subcrates'),
+      this.row('Orden de las crates', select(CRATE_SORTS, s.crateSort || 'custom', (v) => { app.setSetting('crateSort', v); app.libraryUI.renderSide(); }), 'Se aplica dentro de cada nivel de subcrates'),
       this.row('Mostrar pistas de los subcrates en el crate padre', this.toggle('crateSubTracks'), 'Al abrir «Dance» se ven también las pistas de «Dance › 2024», «Dance › Tech House»… sin repetir. El contador y la búsqueda siguen la misma regla'),
       this.row('Crear crates con la estructura de carpetas', this.toggle('folderToCrates'), '«+ Añadir música» → «Carpeta…» crea una crate con el nombre de la carpeta (dentro de la crate abierta, si la hay) y un subcrate por cada subcarpeta con música. Soltar carpetas sobre una crate o sobre «CRATES» lo hace siempre'),
-      this.row('Archivos perdidos', btn('Relocalizar archivos perdidos…', { cls: 'small', onClick: () => { app.closeModal(); app.relocateMissing(); } }), 'Busca en una carpeta las pistas que se han movido y conserva cues, beatgrid, valoración y crates'));
+      this.row('Archivos perdidos', btn('Relocalizar archivos perdidos…', { cls: 'small', onClick: () => { app.closeModal(); app.relocateMissing(); } }), 'Busca en una carpeta las pistas que se han movido y conserva cues, beatgrid, valoración y crates'),
+      ...this.backupRows());
+  }
+
+  // Copias de seguridad de la biblioteca (main/backup.js): pistas, cues, beatgrid, crates, Prepare,
+  // historial y ajustes. Automática al abrir la app (una al día) y antes de cada actualización; 14 últimas.
+  backupRows() {
+    const app = this.app;
+    const head = el('h3', {}, 'Copias de seguridad');
+    if (!platform.backup.available) return [head, el('p', { class: 'set-note' }, 'Las copias de seguridad solo están disponibles en la app de escritorio.')];
+    const list = el('div', { class: 'bk-list', id: 'bk-list', role: 'list' }, el('p', { class: 'hint' }, 'Cargando…'));
+    const fill = async () => {
+      let r;
+      try { r = await platform.backup.list(); } catch (e) { list.replaceChildren(el('p', { class: 'set-note' }, e.message)); return; }
+      if (!r.list.length) { list.replaceChildren(el('p', { class: 'hint' }, 'Todavía no hay copias. Se hace una al abrir la app cada día; también puedes hacerla ahora.')); return; }
+      list.replaceChildren(...r.list.map(b => {
+        const d = b.date ? new Date(b.date) : null;
+        const when = d ? d.toLocaleString('es-ES', { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : b.name;
+        return el('div', { class: 'bk-row' + (b.ok ? '' : ' bad'), role: 'listitem' },
+          el('span', { class: 'bk-date' }, when),
+          el('span', { class: 'bk-meta' }, [BACKUP_REASONS[b.reason] || b.reason, b.tracks != null ? `${b.tracks} pistas` : '', fmtSize(b.size), b.ok ? '' : 'dañada'].filter(Boolean).join(' · ')),
+          b.ok ? btn('Restaurar…', { cls: 'micro', onClick: () => this.restoreBackup(b, when) }) : el('span'));
+      }));
+    };
+    fill();
+    return [
+      head,
+      el('p', { class: 'hint' }, 'Se copia tu biblioteca (pistas, cues, beatgrid, crates, Prepare, historial) y los ajustes al abrir la app (como mucho una vez al día) y antes de cada actualización. Se guardan las 14 últimas. Tu música no se copia.'),
+      el('div', { class: 'row' },
+        btn('Hacer copia ahora', { cls: 'small primary', onClick: async () => {
+          try { const r = await platform.backup.create(); toast(`Copia hecha (${r.tracks ?? 0} pistas, ${fmtSize(r.size)})`, 'ok'); fill(); }
+          catch (e) { toast(e.message.replace(/^Error invoking remote method '[^']+': (Error: )?/, ''), 'error', 7000); }
+        } }),
+        btn('Abrir carpeta', { cls: 'small', onClick: () => platform.backup.openFolder() })),
+      list
+    ];
+  }
+
+  async restoreBackup(b, when) {
+    const app = this.app;
+    const body = el('div', { class: 'form' },
+      el('p', {}, `¿Restaurar la copia del ${when}${b.tracks != null ? ` (${b.tracks} pistas)` : ''}?`),
+      el('p', { class: 'hint' }, 'Tu biblioteca y tus ajustes volverán a como estaban entonces. Antes se hace una copia del estado actual, así que puedes deshacerlo restaurando esa copia. La app se reiniciará.'),
+      app.decks.some(d => d.playing) ? el('p', { class: 'set-note' }, 'Hay música sonando: se cortará al reiniciar.') : null);
+    if (await app.modal('Restaurar copia de seguridad', body, ['Cancelar', 'Restaurar y reiniciar']) !== 1) return;
+    try { await platform.backup.restore(b.name); toast('Copia restaurada. Reiniciando…', 'ok', 5000); }
+    catch (e) { toast('No se pudo restaurar: ' + e.message.replace(/^Error invoking remote method '[^']+': (Error: )?/, ''), 'error', 8000); }
   }
 
   page_midi(p) {
@@ -422,20 +498,20 @@ export class SettingsUI {
   }
 
   page_about(p) {
-    const i = this.app.info;
+    const app = this.app, i = app.info;
+    const link = (label, fn, id) => el('button', { class: 'link', type: 'button', id, onclick: fn }, label);
     p.append(
       el('div', { class: 'logo big' }, el('b', {}, 'NEXURA'), ' DJ STUDIO'),
-      el('p', {}, `Versión ${i.version} · ${i.platform}`),
-      el('p', { class: 'hint' }, 'Software DJ de NexuraIA. Decks con keylock, sync, hot cues, loops, roll, slicer, beat jump, pitch play, slip y censor; mezclador con EQ y filtro; 2 unidades de 3 efectos; sampler de 32 ranuras; análisis de BPM, tonalidad y forma de onda; crates, smart crates, Prepare e historial; grabación; integración con YouTube; compatible con cualquier controladora MIDI (asistente, MIDI learn, importación de mapeos de Mixxx); modo para mesa de mezclas externa.'),
-      el('p', { class: 'hint' }, `Datos de la aplicación: ${i.userData || '—'}`),
+      el('p', { class: 'about-ver' }, `Versión ${i.version}${i.osLabel ? ' · ' + i.osLabel : ''}`),
+      el('p', {}, '© 2026 NexuraIA · Gratis durante la fase de lanzamiento.'),
+      el('p', { class: 'hint' }, 'Software DJ de NexuraIA. Decks con keylock, sync, hot cues, loops, roll, slicer, beat jump, pitch play, slip y censor; mezclador con EQ y filtro; 2 unidades de 3 efectos; sampler de 32 ranuras; stems con IA; análisis de BPM, tonalidad y forma de onda; crates, smart crates, Prepare e historial; grabación; listas de YouTube y Spotify (solo metadatos); compatible con cualquier controladora MIDI.'),
+      el('p', { class: 'about-links' }, link('Licencia de uso', () => app.legal.show('licencia'), 'about-lic'), ' · ', link('Política de privacidad', () => app.legal.show('privacidad'), 'about-priv'), ' · ', link('Licencias de terceros', () => app.legal.show('terceros'), 'about-3p')),
       el('p', {}, 'contacto@nexuraia.com · nexuraia.com'),
-      el('h3', {}, 'Sugerencias y errores'),
-      el('p', { class: 'hint' }, 'Con el botón «💬 SUGERENCIAS» de la barra superior se envía un error o una idea directamente a contacto@nexuraia.com.'),
-      btn('💬 Enviar sugerencias', { cls: 'small', onClick: () => { this.app.closeModal(); this.app.feedback.open(); } }),
-      this.row('Webhook de sugerencias (opcional)', (() => {
-        const inp = el('input', { id: 'set-feedback-webhook', class: 'wide', value: this.app.settings.feedbackWebhook || '', placeholder: 'https://… (p. ej. un webhook de n8n)' });
-        inp.addEventListener('change', () => this.app.setSetting('feedbackWebhook', inp.value.trim()));
-        return inp;
-      })(), 'Si lo rellenas, las sugerencias se envían a este webhook (JSON por POST) en lugar de al correo.'));
+      el('h3', {}, 'Errores y sugerencias'),
+      el('p', { class: 'hint' }, 'Cuéntanos un error o una idea. Puedes adjuntar el registro técnico de la app (sin rutas ni nombres de canciones) y ver antes exactamente qué se envía.'),
+      el('div', { class: 'row' },
+        btn('Enviar informe o sugerencia', { cls: 'small primary', onClick: () => { app.closeModal(); app.feedback.open(); } }),
+        platform.backup.available ? btn('Abrir carpeta del registro', { cls: 'small', onClick: () => platform.openLogFolder() }) : null),
+      el('p', { class: 'hint' }, `Datos de la aplicación: ${i.userData || '—'}`));
   }
 }

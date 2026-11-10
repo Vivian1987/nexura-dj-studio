@@ -1,6 +1,27 @@
 # Nexura DJ Studio — estado y pendientes
 
-Última actualización: 10 de noviembre de 2026 (Autoplay sin cortar y Ctrl+Supr rápido, sin commit) · antes, 9 de noviembre de 2026 · versión **0.9.0-beta.6** (commit 826ed08 en `main`, instalador `dist/Nexura-DJ-Studio-0.9.0-beta.6.zip`).
+Última actualización: 10 de noviembre de 2026 · rama `rc1-imprescindible` (desde la beta.8, sin commit) · versión **1.0.0-rc.1** en `package.json`. Resumen en `.revision/RESUMEN-rc1.md`.
+
+## 1.0-rc1 — lo imprescindible para distribuirla gratis (10 nov 2026, sin commit)
+- **Actualizaciones automáticas** (electron-updater + GitHub Releases de `mcontrerasdevpro/nexura-dj-studio`): aviso en la barra de estado, descarga con progreso, «Reiniciar para actualizar» (con música sonando se instala al cerrar); Ajustes → General; canal de versiones de prueba opcional; sin red o sin releases, silencio. `npm run release` publica un borrador (necesita `GH_TOKEN`).
+- **Copias de seguridad de la biblioteca**: al arrancar (una al día) y antes de cada actualización, 14 últimas en `<datos>\copias`; Ajustes → Biblioteca (lista, hacer, restaurar, abrir carpeta); si al arrancar la biblioteca está dañada ofrece restaurar la última copia buena.
+- **Informe de errores y sugerencias**: registro local rotativo (`<datos>\logs`, 5 × 1 MB), diálogo con tipo, email opcional y «Adjuntar registro técnico» con vista previa anonimizada; POST a `feedbackUrl` o, si no, correo + .txt.
+- **Contador anónimo de uso** opcional y explicado (`statsUrl`, vacío = desactivado).
+- **Bienvenida** de 4 pasos, **textos legales** (EULA en el instalador, privacidad, licencias de terceros), **menú de ayuda «?»** y **Acerca de** nuevo.
+- **Microsoft Store** preparada (`npm run store`, iconos en `build/appx`), sin identidad todavía.
+- **Botón Ordenar crates** (⇅ junto a «+ Nuevo» en la cabecera CRATES): abre el menú de orden que antes solo estaba en el clic derecho y en Ajustes, con textos más claros («Como se crearon», «Por nombre (A → Z)», «Personalizado (arrastrar)») y ✓ en el actual; el tooltip dice el orden activo. La lógica de orden y el arrastre no cambian. Prueba: `npx electron tools/ui-check-orden-crates.cjs` (`.revision/orden-crates/`).
+
+### Lo que tiene que hacer Miguel antes de distribuir la rc1
+- Completar en `src/legal/LICENCIA.txt` y `PRIVACIDAD.txt` el **[COMPLETAR: nombre o razón social, NIF y domicilio]** y que lo revise alguien de confianza en lo legal.
+- Rellenar `feedbackUrl` en `src/config/servicios.json` con el webhook (si no, se usa el de `config.local.json` como en la beta) y, cuando exista, `statsUrl`.
+- `GH_TOKEN` para `npm run release`; publicar la privacidad en nexuraia.com (la pide la Store).
+- Partner Center (Microsoft Store): alta, reservar el nombre y copiar la identidad a `build/store-identidad.json`.
+
+### Por probar a mano (rc1)
+- Una actualización real de extremo a extremo: publicar 1.0.0-rc.1 como prerelease, instalarla, publicar una rc.2 de prueba y comprobar aviso → descarga → reinicio (y que con un deck sonando espera al cierre).
+- El instalador: que muestre la licencia con las tildes bien y que la actualización silenciosa no enseñe el mensaje de agradecimiento.
+- Restaurar una copia con la biblioteca real (miles de pistas) y el aviso de biblioteca dañada (por ejemplo, dejando `library.json` vacío).
+- El correo de respaldo del informe con el programa de correo que tengas (Outlook / Correo de Windows / ninguno).
 
 ## Hecho en esta sesión (frente a Serato DJ Pro 5)
 - **Fase 1 — biblioteca:** importar M3U/M3U8, proteger biblioteca (candado), reiniciar pistas tocadas, columnas configurables (valoración, Explicit, carátula, año, energía, comentario), colores y orden de crates, buscar en crate, «mostrar en qué crates está», archivos perdidos y relocalizar, modo de pads Cue Loop, retorno del slip, altura mínima de la biblioteca (8 filas en 1496×885).
@@ -27,6 +48,7 @@
 - Barra lateral nueva con la biblioteca real (cientos de crates): soltura del buscador, arrastrar pistas y crates con el ratón de verdad y lectura con un lector de pantalla.
 
 ## Pendiente
+- **Para la 1.0 final:** firma de código del instalador (SmartScreen), traducción al inglés si se distribuye fuera de España, página de descarga en nexuraia.com con la política de privacidad, y decidir qué hacer con «💬 SUGERENCIAS» (ahora duplica «? → Enviar informe o sugerencia»).
 - **Fase 3 — interfaz y actuación:** formas de onda en vertical; paneles Prepare/Historial en vertical; sampler con vista ampliada; Scratch Bank; micrófono con talkover; Ableton Link; Flip completo (ahora beta).
 - **Fase 4 — audio avanzado y expansiones:** keylock de alta calidad (nivel Pitch 'n Time); DVS (vinilos/CDJ de control); vídeo.
 - **Opcional:** «quitar de la lista» en listas de YouTube importadas; decidir si los FX se muestran siempre en pantallas de poca altura (ahora quedan tras ☰ con alto ≤ 900 px); más luminosidad en tonalidades azules/violetas de `keyColor`.
