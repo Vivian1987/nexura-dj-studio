@@ -11,3 +11,6 @@ __pycache__/
 CLAUDE.md
 # capturas y notas de revisión locales
 .revision/
+# configuración temporal del actualizador en las pruebas (tools/ui-check-rc1-escritorio.cjs)
+dev-app-update.yml
+tools/dev-app-update.yml

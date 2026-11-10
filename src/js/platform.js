@@ -7,6 +7,13 @@ export const isDesktop = !!(N && N.isDesktop);
 
 const webFiles = new Map();
 const webWaves = new Map();
+const webLog = [];
+// shared/anonymize.js no es un módulo ES (también lo carga el proceso principal con require): deja la API
+// en globalThis.nexuraAnonymize
+async function webAnonymizer() {
+  if (!globalThis.nexuraAnonymize) await import('./shared/anonymize.js');
+  return globalThis.nexuraAnonymize;
+}
 
 function webInfo(file) {
   const id = 'web:' + file.name + ':' + file.size;
@@ -177,19 +184,53 @@ export const platform = {
     if (N) return N.openExternal(url);
     if (url.startsWith('mailto:')) location.href = url; else window.open(url, '_blank', 'noopener');
   },
-  async sendFeedback(payload) {
-    if (N && N.sendFeedback) return N.sendFeedback(payload);
-    // modo navegador (pruebas): sin webhook propio, directamente el respaldo
-    const r = await fetch('https://formsubmit.co/ajax/contacto@nexuraia.com', { method: 'POST', headers: { 'Content-Type': 'application/json', Accept: 'application/json' }, body: JSON.stringify(payload) });
-    const j = await r.json().catch(() => ({}));
-    if (!r.ok || String(j.success) !== 'true') throw new Error(j.message || 'HTTP ' + r.status);
-    return true;
+  // Registro técnico local (<datos de usuario>\logs). En el navegador solo queda en memoria.
+  log(lines) {
+    if (N && N.log) return N.log(lines);
+    webLog.push(...lines.map(l => `${new Date().toISOString()} [${l.level}] [ui:${l.source}] ${l.msg}`));
+    webLog.splice(0, Math.max(0, webLog.length - 400));
   },
-  async postFeedback(url, payload) {
-    if (N && N.postFeedback) return N.postFeedback(url, payload);
-    const r = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
-    if (!r.ok) throw new Error('HTTP ' + r.status);
-    return true;
+  openLogFolder() { if (N && N.openLogFolder) return N.openLogFolder(); },
+  // Informe de errores y sugerencias (el proceso principal anonimiza y envía; ver main/report.js).
+  // Modo navegador (pruebas): vista previa con el registro en memoria y envío simulado con
+  // window.__nexuraReportMock = { send(info) } o, si no existe, abre el correo.
+  report: {
+    async preview(info) {
+      if (N && N.report) return N.report.preview(info);
+      const { anonymize } = await webAnonymizer();
+      return { version: 'web', os: navigator.platform || 'navegador', controller: info.controller || 'ninguna', decks: info.decks === 4 ? 4 : 2, log: webLog.slice(-200).map(l => anonymize(l, { known: info.known })) };
+    },
+    async send(info) {
+      if (N && N.report) return N.report.send(info);
+      if (window.__nexuraReportMock) return window.__nexuraReportMock.send(info);
+      location.href = 'mailto:contacto@nexuraia.com?subject=' + encodeURIComponent('Nexura DJ Studio') + '&body=' + encodeURIComponent(String(info.text || '').slice(0, 1200));
+      return { ok: false, via: 'mail', file: '' };
+    }
+  },
+  // Copias de seguridad de la biblioteca (solo escritorio)
+  backup: {
+    available: !!(N && N.backup),
+    list() { return N && N.backup ? N.backup.list() : Promise.resolve({ dir: '', list: [] }); },
+    create() { if (!N || !N.backup) throw new Error('Las copias de seguridad solo están disponibles en la app de escritorio'); return N.backup.create(); },
+    restore(name) { if (!N || !N.backup) throw new Error('Las copias de seguridad solo están disponibles en la app de escritorio'); return N.backup.restore(name); },
+    openFolder() { if (N && N.backup) return N.backup.openFolder(); }
+  },
+  // Contador anónimo de uso (solo escritorio y solo con statsUrl en src/config/servicios.json)
+  stats: {
+    send(info) { return N && N.stats ? N.stats.send(info) : Promise.resolve({ sent: false, reason: 'navegador' }); },
+    preview(info) {
+      if (N && N.stats) return N.stats.preview(info);
+      return Promise.resolve({ id: '00000000-0000-4000-8000-000000000000', version: 'web', lang: navigator.language || 'es-ES', os: 'Windows 11', decks: info.decks === 4 ? 4 : 2, controller: !!info.controller });
+    }
+  },
+  // Actualizaciones automáticas (solo la app instalada)
+  updates: {
+    available: !!(N && N.updates),
+    configure(cfg) { return N && N.updates ? N.updates.configure(cfg) : Promise.resolve({ state: 'disabled' }); },
+    check() { return N && N.updates ? N.updates.check() : Promise.resolve({ state: 'disabled' }); },
+    download() { return N && N.updates ? N.updates.download() : Promise.resolve(false); },
+    install() { return N && N.updates ? N.updates.install() : Promise.resolve(false); },
+    onEvent(fn) { return N && N.updates ? N.updates.onEvent(fn) : () => {}; }
   },
   // Stems (solo escritorio: necesita el motor de Demucs instalado en tools/stems)
   stems: {

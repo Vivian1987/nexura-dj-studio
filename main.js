@@ -14,20 +14,31 @@ const APP_NAME = 'Nexura DJ Studio';
 const SRC_DIR = path.join(__dirname, 'src');
 const AUDIO_EXT = new Set(['.mp3', '.wav', '.flac', '.ogg', '.oga', '.opus', '.m4a', '.aac', '.mp4', '.webm']);
 const isDev = process.argv.includes('--dev');
-// Destino de las sugerencias de la beta:
-// 1) Webhook propio de NexuraIA (n8n → envía el correo desde contacto@nexuraia.com). La URL va en
-//    config.local.json (no se sube al repositorio; ver config.local.example.json) y entra en el instalador.
-function readLocalConfig() {
-  try { return JSON.parse(fs.readFileSync(path.join(__dirname, 'config.local.json'), 'utf8')); } catch (_) { return {}; }
-}
-const FEEDBACK_WEBHOOK = String(readLocalConfig().feedbackWebhook || '');
-// 2) Respaldo: FormSubmit (servicio gratuito; requiere activar el correo la primera vez)
-const FEEDBACK_ENDPOINT = 'https://formsubmit.co/ajax/contacto@nexuraia.com';
+const { createLogger } = require('./main/logger');
+const backup = require('./main/backup');
+const report = require('./main/report');
+const stats = require('./main/stats');
+const { createUpdater } = require('./main/updater');
+
+// Servicios de NexuraIA (src/config/servicios.json; vacío = desactivado):
+//   feedbackUrl → informes y sugerencias (POST JSON); statsUrl → contador anónimo de uso (POST JSON).
+// Compatibilidad con la beta: si feedbackUrl está vacío se usa «feedbackWebhook» de config.local.json
+// (archivo privado, no se sube al repositorio; ver config.local.example.json).
+function readJsonFile(p) { try { return JSON.parse(fs.readFileSync(p, 'utf8')); } catch (_) { return {}; } }
+const SERVICES = readJsonFile(path.join(SRC_DIR, 'config', 'servicios.json'));
+const LEGACY_WEBHOOK = String(readJsonFile(path.join(__dirname, 'config.local.json')).feedbackWebhook || '');
+const webUrl = (u) => (/^https?:\/\//.test(String(u || '')) ? String(u) : '');
+const FEEDBACK_URL = webUrl(SERVICES.feedbackUrl) || webUrl(LEGACY_WEBHOOK);
+const STATS_URL = webUrl(SERVICES.statsUrl);
+const OS_LABEL = report.windowsLabel(process.platform, os.release());
 
 // El audio en tiempo real no debe frenarse cuando la ventana pierde el foco
 app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required');
 app.commandLine.appendSwitch('disable-renderer-backgrounding');
 app.commandLine.appendSwitch('disable-background-timer-throttling');
+
+// Pruebas (tools/ui-check-rc1-escritorio.cjs): datos en una carpeta temporal, sin tocar los del usuario
+if (process.env.NEXURA_USER_DATA) app.setPath('userData', process.env.NEXURA_USER_DATA);
 
 if (!app.requestSingleInstanceLock()) {
   app.quit();
@@ -42,9 +53,68 @@ let serverPort = 0;
 const dataDir = () => path.join(app.getPath('userData'), 'data');
 const waveDir = () => path.join(dataDir(), 'waveforms');
 const recDir = () => path.join(app.getPath('music'), APP_NAME, 'Grabaciones');
+const copiasDir = () => path.join(app.getPath('userData'), 'copias');
+const reportsDir = () => path.join(app.getPath('userData'), 'informes');
 
 async function ensureDirs() {
   await fsp.mkdir(waveDir(), { recursive: true });
+}
+
+// Registro técnico local (<datos de usuario>\logs, 5 archivos de 1 MB como mucho)
+let logger = null;
+const log = (level, source, msg) => { try { (logger || (logger = createLogger(path.join(app.getPath('userData'), 'logs')))).write(level, source, msg); } catch (_) { /* nunca romper por el registro */ } };
+process.on('uncaughtException', (e) => { log('ERROR', 'main', 'Excepción no capturada: ' + ((e && e.stack) || e)); console.error(e); });
+process.on('unhandledRejection', (e) => { log('ERROR', 'main', 'Promesa rechazada: ' + ((e && e.stack) || e)); });
+
+// Mientras se restaura una copia no se escribe nada en los datos (la interfaz puede tener guardados pendientes)
+let storeLocked = false;
+const backupNow = (reason) => backup.makeBackup(dataDir(), copiasDir(), { reason, version: app.getVersion() });
+
+// Al arrancar: si la biblioteca o los ajustes no se pueden leer, ofrecer la última copia buena en vez de
+// empezar vacío (la app guardaría encima una biblioteca vacía). Si todo está bien, copia del día.
+async function startupBackup() {
+  const health = backup.checkHealth(dataDir());
+  if (!health.ok) {
+    log('ERROR', 'copias', 'Datos dañados al arrancar: ' + health.damaged.join(', '));
+    const good = backup.latestGood(copiasDir());
+    const when = good ? new Date(good.date || Date.now()).toLocaleString('es-ES', { dateStyle: 'long', timeStyle: 'short' }) : '';
+    const buttons = good ? [`Restaurar la copia del ${when}`, 'Empezar con la biblioteca vacía'] : ['Empezar con la biblioteca vacía'];
+    const r = await dialog.showMessageBox({
+      type: 'warning', title: APP_NAME, buttons, defaultId: 0, cancelId: buttons.length - 1, noLink: true,
+      message: 'No se ha podido leer tu biblioteca',
+      detail: (good
+        ? `El archivo de ${health.damaged.includes('library.json') ? 'la biblioteca' : 'los ajustes'} está dañado (por ejemplo, por un corte de luz). Hay una copia de seguridad buena${good.tracks != null ? ` con ${good.tracks} pistas` : ''}.`
+        : 'El archivo está dañado y no hay copias de seguridad.') +
+        '\n\nSi empiezas con la biblioteca vacía, el archivo dañado se guarda aparte (no se borra) en la carpeta de datos.'
+    });
+    if (good && r.response === 0) {
+      try { backup.restoreBackup(dataDir(), copiasDir(), good.name, { version: app.getVersion() }); log('INFO', 'copias', 'Restaurada la copia ' + good.name); return; }
+      catch (e) { log('ERROR', 'copias', 'No se pudo restaurar: ' + e.message); dialog.showErrorBox(APP_NAME, 'No se pudo restaurar la copia: ' + e.message); }
+    }
+    backup.setAsideDamaged(dataDir(), health.damaged);
+    return;
+  }
+  try {
+    const r = backup.autoBackup(dataDir(), copiasDir(), { version: app.getVersion() });
+    if (r.name) log('INFO', 'copias', `Copia automática ${r.name} (${r.tracks ?? '?'} pistas)`);
+  } catch (e) { log('WARN', 'copias', 'Copia automática: ' + e.message); }
+}
+
+// Actualizaciones: solo en la app instalada con el instalador (no en «npm start» ni en la Microsoft Store,
+// que actualiza ella misma)
+let updater = null;
+function setupUpdater() {
+  let autoUpdater = null;
+  // NEXURA_UPDATER_TEST=1: probarlo sin instalar (lee dev-app-update.yml de la raíz del proyecto)
+  const test = process.env.NEXURA_UPDATER_TEST === '1';
+  const enabled = (app.isPackaged || test) && !process.windowsStore && process.env.NEXURA_NO_UPDATES !== '1';
+  if (enabled) { try { ({ autoUpdater } = require('electron-updater')); if (test) autoUpdater.forceDevUpdateConfig = true; } catch (e) { log('WARN', 'actualizaciones', 'electron-updater no disponible: ' + e.message); } }
+  updater = createUpdater({
+    autoUpdater, enabled: enabled && !!autoUpdater,
+    send: (ev) => { if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('update:event', ev); },
+    log: (level, msg) => log(level, 'actualizaciones', msg),
+    beforeInstall: async (reason) => { const r = backupNow(reason); if (r.name) log('INFO', 'copias', 'Copia antes de actualizar: ' + r.name); }
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -61,7 +131,8 @@ const MIME = {
   '.svg': 'image/svg+xml',
   '.ico': 'image/x-icon',
   '.woff2': 'font/woff2',
-  '.wav': 'audio/wav'
+  '.wav': 'audio/wav',
+  '.txt': 'text/plain; charset=utf-8'
 };
 
 function startStaticServer() {
@@ -641,7 +712,8 @@ function registerIpc() {
   registerStemsIpc();
   ipcMain.handle('app:info', () => ({
     os: `${os.type()} ${os.release()} (${os.arch()})`, electron: process.versions.electron,
-    isBeta: /beta|alpha|rc/i.test(app.getVersion()),
+    isBeta: /beta|alpha|rc/i.test(app.getVersion()), osLabel: OS_LABEL, store: !!process.windowsStore,
+    services: { feedback: !!FEEDBACK_URL, stats: !!STATS_URL }, updates: !!(updater && updater.status().state !== 'disabled'),
     version: app.getVersion(), name: APP_NAME, platform: process.platform,
     userData: app.getPath('userData'), recordings: recDir()
   }));
@@ -791,7 +863,7 @@ function registerIpc() {
     try { return JSON.parse(await fsp.readFile(path.join(dataDir(), name + '.json'), 'utf8')); } catch (_) { return null; }
   });
   ipcMain.handle('store:set', async (_e, name, data) => {
-    if (!/^[a-z0-9_-]+$/i.test(name)) return false;
+    if (!/^[a-z0-9_-]+$/i.test(name) || storeLocked) return false;
     const file = path.join(dataDir(), name + '.json');
     const tmp = file + '.tmp';
     await fsp.writeFile(tmp, JSON.stringify(data));
@@ -818,36 +890,89 @@ function registerIpc() {
     return file;
   });
   ipcMain.handle('shell:showItem', (_e, p) => { shell.showItemInFolder(p); return true; });
-  // Sugerencias de la beta: envío directo al correo de NexuraIA mediante FormSubmit
-  ipcMain.handle('feedback:email', async (_e, p) => {
-    p = p || {};
-    if (FEEDBACK_WEBHOOK) {
-      try {
-        const w = await fetch(FEEDBACK_WEBHOOK, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ app: 'Nexura DJ Studio', ...p }) });
-        if (w.ok) return true;
-      } catch (_) { /* se intenta el respaldo */ }
+  // ---- Registro técnico: líneas de la interfaz (errores de JS, promesas, audio, MIDI…)
+  ipcMain.on('log:write', (_e, lines) => {
+    for (const l of (Array.isArray(lines) ? lines : []).slice(0, 50)) log(l && l.level, 'ui:' + String((l && l.source) || 'app').slice(0, 14), l && l.msg);
+  });
+  ipcMain.handle('log:openFolder', () => shell.openPath(path.join(app.getPath('userData'), 'logs')));
+
+  // ---- Copias de seguridad de la biblioteca (main/backup.js)
+  ipcMain.handle('backup:list', () => ({ dir: copiasDir(), list: backup.listBackups(copiasDir()) }));
+  ipcMain.handle('backup:create', () => {
+    const r = backupNow('manual');
+    if (r.skipped === 'danada') throw new Error('La biblioteca actual está dañada: no se copia para no desplazar las copias buenas.');
+    if (r.skipped) throw new Error('Todavía no hay biblioteca que copiar.');
+    log('INFO', 'copias', 'Copia manual ' + r.name);
+    return r;
+  });
+  // Restaurar: copia del estado actual, sustituir los datos y reiniciar la app (sin dejar que la interfaz
+  // guarde encima lo que tiene en memoria)
+  ipcMain.handle('backup:restore', async (_e, name) => {
+    storeLocked = true;
+    try {
+      const r = backup.restoreBackup(dataDir(), copiasDir(), String(name || ''), { version: app.getVersion() });
+      log('INFO', 'copias', `Restaurada la copia ${name} (antes: ${r.before})`);
+      setTimeout(() => { app.relaunch(); app.exit(0); }, 600);
+      return r;
+    } catch (e) { storeLocked = false; throw e; }
+  });
+  ipcMain.handle('backup:openFolder', async () => { await fsp.mkdir(copiasDir(), { recursive: true }); return shell.openPath(copiasDir()); });
+
+  // ---- Informe de errores y sugerencias (main/report.js)
+  // info: { kind, text, email, attach, controller, decks, known: [títulos/artistas/archivos a ocultar] }
+  const techFor = (info) => report.technical({
+    version: app.getVersion(), os: `${OS_LABEL} (${os.release()}, ${os.arch()})`, controller: info.controller, decks: info.decks,
+    log: logger ? logger.tail(report.LOG_LINES) : [], known: info.known, user: os.userInfo().username, home: os.homedir()
+  });
+  ipcMain.handle('report:preview', (_e, info) => techFor(info || {}));
+  ipcMain.handle('report:send', async (_e, info) => {
+    info = info || {};
+    // sugerencias que quedaron en cola en la beta: se envían tal cual (sin alternativa)
+    if (info.legacy) {
+      if (!FEEDBACK_URL) return { ok: false };
+      const r = await fetch(FEEDBACK_URL, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ app: APP_NAME, ...info.legacy }) }).catch(() => null);
+      return { ok: !!(r && r.ok) };
     }
-    const isEmail = /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(p.contact || '');
-    const body = {
-      _subject: String(p.subject || 'Sugerencia Nexura DJ Studio').slice(0, 200),
-      _template: 'table', _captcha: 'false',
-      Tipo: p.category || '', Mensaje: String(p.message || '').slice(0, 5000), Contacto: p.contact || '(no indicado)',
-      Version: p.version || app.getVersion(), Fecha: p.date || new Date().toISOString(),
-      Equipo: p.system || '(no incluido)', Errores: p.errors || '(ninguno)'
-    };
-    if (isEmail) body._replyto = p.contact;
-    const r = await fetch(FEEDBACK_ENDPOINT, { method: 'POST', headers: { 'Content-Type': 'application/json', Accept: 'application/json' }, body: JSON.stringify(body) });
-    const j = await r.json().catch(() => ({}));
-    if (!r.ok || String(j.success) !== 'true') throw new Error(j.message || 'HTTP ' + r.status);
-    return true;
+    const tech = info.attach ? techFor(info) : null;
+    const payload = report.buildPayload({ kind: info.kind, text: info.text, email: info.email, attach: !!info.attach, tech, version: app.getVersion() });
+    if (FEEDBACK_URL) {
+      try {
+        const ctl = new AbortController(); const t = setTimeout(() => ctl.abort(), 15000);
+        const r = await fetch(FEEDBACK_URL, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload), signal: ctl.signal });
+        clearTimeout(t);
+        if (r.ok) { log('INFO', 'informe', 'Informe enviado'); return { ok: true, via: 'web' }; }
+        log('WARN', 'informe', 'El servicio de informes respondió HTTP ' + r.status);
+      } catch (e) { log('WARN', 'informe', 'Sin conexión con el servicio de informes'); }
+    }
+    // alternativa: guardar el informe en un .txt y abrir el correo con el texto
+    await fsp.mkdir(reportsDir(), { recursive: true });
+    const file = path.join(reportsDir(), `informe-${backup.folderName(new Date())}.txt`);
+    const txt = report.reportText({ kind: payload.type, text: payload.message, email: payload.email, tech }).replace(/\n/g, '\r\n');
+    await fsp.writeFile(file, '﻿' + txt);
+    shell.openExternal(report.mailtoUrl({ kind: payload.type, text: payload.message, email: payload.email, file: tech ? file : '' })).catch(() => {});
+    if (tech) shell.showItemInFolder(file);
+    return { ok: false, via: 'mail', file };
   });
-  // Sugerencias de la beta: envío a un webhook https configurado por el usuario (p. ej. n8n)
-  ipcMain.handle('feedback:post', async (_e, url, payload) => {
-    if (!/^https:\/\//.test(url)) throw new Error('El webhook debe empezar por https://');
-    const r = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload || {}) });
-    if (!r.ok) throw new Error('HTTP ' + r.status);
-    return true;
+
+  // ---- Contador anónimo de uso (main/stats.js): solo con statsUrl y permiso del usuario
+  ipcMain.handle('stats:send', async (_e, info) => {
+    info = info || {};
+    const r = await stats.sendStats({
+      url: STATS_URL, enabled: info.enabled === true, file: path.join(dataDir(), 'instalacion.id'),
+      data: { version: app.getVersion(), lang: app.getLocale(), os: OS_LABEL, decks: info.decks, controller: info.controller }
+    });
+    if (r.sent) log('INFO', 'estadisticas', 'Estadísticas anónimas enviadas');
+    return { sent: r.sent, reason: r.reason };
   });
+  // Lo que se enviaría (para enseñarlo en Ajustes), sin enviar nada
+  ipcMain.handle('stats:preview', (_e, info) => stats.buildPayload({ id: '00000000-0000-4000-8000-000000000000', version: app.getVersion(), lang: app.getLocale(), os: OS_LABEL, decks: (info || {}).decks, controller: (info || {}).controller }));
+
+  // ---- Actualizaciones (main/updater.js)
+  ipcMain.handle('update:configure', (_e, cfg) => { updater.configure(cfg || {}); return updater.status(); });
+  ipcMain.handle('update:check', () => updater.check(true));
+  ipcMain.handle('update:download', () => updater.download());
+  ipcMain.handle('update:install', () => updater.install());
+  ipcMain.handle('update:status', () => updater.status());
   ipcMain.handle('shell:openExternal', (_e, url) => {
     if (externalAllowed(url) || /^mailto:contacto@nexuraia\.com\?/.test(url)) { shell.openExternal(url); return true; }
     return false;
@@ -911,6 +1036,8 @@ async function createWindow() {
     }
   });
   Menu.setApplicationMenu(null);
+  mainWindow.webContents.on('render-process-gone', (_e, d) => log('ERROR', 'main', `La interfaz se cerró inesperadamente (${d.reason}, código ${d.exitCode})`));
+  mainWindow.webContents.on('unresponsive', () => log('WARN', 'main', 'La interfaz no responde'));
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
     if (/^https:\/\//.test(url)) shell.openExternal(url);
     return { action: 'deny' };
@@ -923,12 +1050,17 @@ async function createWindow() {
   if (isDev) mainWindow.webContents.openDevTools({ mode: 'detach' });
 }
 
+app.on('child-process-gone', (_e, d) => { if (d.reason !== 'clean-exit') log('ERROR', 'main', `Proceso ${d.type}${d.name ? ' (' + d.name + ')' : ''} terminado: ${d.reason}`); });
+
 app.on('second-instance', () => {
   if (mainWindow) { if (mainWindow.isMinimized()) mainWindow.restore(); mainWindow.focus(); }
 });
 
 app.whenReady().then(async () => {
   await ensureDirs();
+  log('INFO', 'main', `Inicio ${APP_NAME} ${app.getVersion()} · ${OS_LABEL} ${os.release()} · Electron ${process.versions.electron}`);
+  await startupBackup();
+  setupUpdater();
   await loadSecrets();
   await loadSpotify();
   setupPermissions();

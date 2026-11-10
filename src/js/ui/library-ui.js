@@ -32,6 +32,7 @@ const ICON = {
   sp: 'M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0z M7.5 10c3-1 6.5-.7 9 .8 M8 13.2c2.4-.7 5-.4 7 .7 M8.6 16c1.8-.5 3.7-.3 5.3.5',
   search: 'M11 18a7 7 0 1 1 0-14 7 7 0 0 1 0 14z M20 20l-4-4',
   plus: 'M12 5v14 M5 12h14',
+  sort: 'M7 20V4 M3 8l4-4 4 4 M17 4v16 M13 16l4 4 4-4',
   import: 'M12 4v11 M7 10l5 5 5-5 M5 20h14',
   open: 'M6 9l6 6 6-6',
   closed: 'M9 6l6 6-6 6',
@@ -335,7 +336,7 @@ export class LibraryUI {
         { label: 'Revisar importación de Spotify…', fn: () => this.app.spotifyCrate(c.id, false) },
         { label: 'Actualizar desde Spotify', fn: () => this.app.spotifyCrate(c.id, true) }
       ] : []),
-      { label: 'Ordenar crates', sub: Object.entries(CRATE_SORTS).map(([k, v]) => ({ label: (this.app.settings.crateSort === k ? '✓ ' : ' ') + v, fn: () => this.setCrateSort(k) })) },
+      { label: 'Ordenar crates', sub: this.sortMenu() },
       ...(this.app.stems.available ? [{ label: '🎚 Separar stems de la crate (segundo plano)', fn: () => { const n = this.app.stems.enqueue(L.crateTrackIds(c.id).map(id => L.get(id))); this.app.toast(n ? `${n} pista(s) en cola de stems` : 'Todas las pistas de la crate ya tienen stems', n ? 'ok' : 'info'); } }] : []),
       { label: 'Eliminar crate', danger: true, fn: () => this.deleteCrateAsk(c) }
     ];
@@ -372,6 +373,13 @@ export class LibraryUI {
     return all.map(x => { const kids = all.some(y => y.c.parent === x.c.id); return this.crateItem({ ...x, hasKids: kids, open: kids }); });
   }
   sortMenu() { return Object.entries(CRATE_SORTS).map(([k, v]) => ({ label: (this.app.settings.crateSort === k ? '✓ ' : ' ') + v, fn: () => this.setCrateSort(k) })); }
+  // Botón ⇅ de la cabecera CRATES: abre el mismo menú de orden (el tooltip dice el orden actual)
+  sortBtn() {
+    const cur = CRATE_SORTS[this.app.settings.crateSort] || CRATE_SORTS.custom;
+    const b = el('button', { class: 'sec-btn sec-ico', type: 'button', 'aria-label': 'Ordenar crates', title: `Ordenar crates · ahora: ${cur}` }, icon('sort', 14, null, 2.2));
+    b.addEventListener('click', (e) => { e.stopPropagation(); this.menuAt(b, this.sortMenu()); });
+    return b;
+  }
   // Cabecera «CRATES»: soltar aquí una crate la devuelve a la raíz; soltar carpetas crea crates en la raíz.
   // Clic derecho: orden de las crates, nueva crate e importar M3U
   cratesHead() {
@@ -452,7 +460,7 @@ export class LibraryUI {
     online.push(...this.lib.sortedCrates(this.app.settings.crateSort).filter(c => this.isOnlineCrate(c) && hit(c.name)).map(c => this.crateItem({ c, depth: 0, hasKids: false, open: false })));
     const groups = [
       this.group('library', 'BIBLIOTECA', null, lib),
-      this.group('crates', 'CRATES', this.secBtn('Nuevo', 'Nuevo crate (para un subcrate: clic derecho en la crate → «Nuevo subcrate…» o arrastra una crate sobre otra)', () => this.newCrate(null)), crates, this.cratesHead()),
+      this.group('crates', 'CRATES', el('span', { class: 'sec-btns' }, this.secBtn('Nuevo', 'Nuevo crate (para un subcrate: clic derecho en la crate → «Nuevo subcrate…» o arrastra una crate sobre otra)', () => this.newCrate(null)), this.sortBtn()), crates, this.cratesHead()),
       this.group('smart', 'SMART CRATES', this.secBtn('Nuevo', 'Nuevo smart crate', () => this.smartEditor()), smart),
       this.group('online', 'LISTAS ONLINE', this.secBtn('Importar', 'Importar lista de YouTube, Spotify o M3U', (b) => this.importMenu(b)), online)
     ];

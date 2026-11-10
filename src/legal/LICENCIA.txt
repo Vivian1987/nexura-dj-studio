@@ -1,0 +1,51 @@
+﻿NEXURA DJ STUDIO — CONTRATO DE LICENCIA DE USUARIO FINAL
+Versión 1.0 · noviembre de 2026
+
+Titular: NexuraIA ([COMPLETAR: nombre o razón social, NIF y domicilio])
+Contacto: contacto@nexuraia.com · https://nexuraia.com
+
+Lee este contrato antes de instalar o usar Nexura DJ Studio (en adelante, «el Programa»). Al instalarlo o usarlo aceptas estas condiciones. Si no las aceptas, no instales ni uses el Programa.
+
+1. LICENCIA
+NexuraIA te concede una licencia personal, no exclusiva, intransferible y revocable para instalar y usar el Programa en tus propios equipos, tanto para uso privado como en actuaciones (incluidas las remuneradas).
+
+2. USO GRATUITO DURANTE LA FASE DE LANZAMIENTO
+El Programa se ofrece de forma gratuita durante su fase de lanzamiento. NexuraIA se reserva el derecho a ofrecer en el futuro funciones, ampliaciones o versiones de pago. Si eso ocurre, se anunciará con antelación y las condiciones de pago no se aplicarán de forma retroactiva a lo que ya hayas usado gratis.
+
+3. LO QUE NO PUEDES HACER
+- Vender, alquilar, sublicenciar o distribuir el Programa con ánimo de lucro, ni hacerlo pasar por tuyo.
+- Modificar, descompilar o desensamblar el Programa, salvo en lo que permita expresamente la ley.
+- Quitar o alterar los avisos de autoría, marcas o textos legales.
+- Usar el Programa para infringir derechos de terceros o la ley.
+Puedes compartir el instalador oficial sin modificar y de forma gratuita.
+
+4. TU MÚSICA Y LOS DERECHOS DE AUTOR
+El Programa no incluye música. Eres el único responsable de tener los derechos o licencias necesarios sobre la música y demás contenidos que reproduzcas, mezcles, grabes o publiques con él, y de las licencias que exija la comunicación pública de música (por ejemplo, en locales o retransmisiones).
+
+5. YOUTUBE Y SPOTIFY
+- Los vídeos de YouTube se reproducen únicamente con el reproductor oficial de YouTube y quedan sujetos a las Condiciones de servicio de YouTube. El Programa no descarga, graba ni extrae audio o vídeo de YouTube.
+- De Spotify solo se importan metadatos (título, artistas, duración, ISRC y carátula) para crear listas con tu propia música. El Programa no descarga ni reproduce audio de Spotify.
+- YouTube y Spotify son marcas de sus respectivos titulares. NexuraIA no tiene relación con ellos ni cuenta con su respaldo.
+
+6. COMPONENTES DE TERCEROS
+El Programa incluye componentes de código abierto con sus propias licencias (ver «Licencias de terceros» en Ajustes → Acerca de y el archivo TERCEROS.txt). Esas licencias prevalecen en lo que se refiere a cada componente.
+
+7. ACTUALIZACIONES
+El Programa puede buscar actualizaciones en Internet (lo puedes desactivar en Ajustes → General). Las actualizaciones se rigen por este contrato salvo que vengan con uno nuevo.
+
+8. SIN GARANTÍA
+El Programa se ofrece «TAL CUAL», sin garantías de ningún tipo, expresas o implícitas, incluidas las de funcionamiento ininterrumpido, ausencia de errores o adecuación a un fin concreto. Se recomienda probarlo antes de usarlo en una actuación y hacer copias de seguridad de tu biblioteca y de tu música.
+
+9. LIMITACIÓN DE RESPONSABILIDAD
+En la medida en que lo permita la ley, NexuraIA no será responsable de daños indirectos, pérdida de datos, de ingresos o de actuaciones derivados del uso o la imposibilidad de uso del Programa. Nada de lo anterior limita los derechos que te reconozca la normativa de protección de los consumidores ni la responsabilidad que no pueda excluirse legalmente (dolo o culpa grave).
+
+10. PRIVACIDAD
+El tratamiento de datos se describe en la Política de privacidad (PRIVACIDAD.txt y Ajustes → Acerca de).
+
+11. FIN DE LA LICENCIA
+La licencia termina si incumples este contrato. Puedes terminarla en cualquier momento desinstalando el Programa.
+
+12. LEY Y JURISDICCIÓN
+Este contrato se rige por la ley española. Si eres consumidor, serán competentes los juzgados de tu domicilio; en otro caso, los del domicilio de NexuraIA.
+
+© 2026 NexuraIA. Nexura DJ Studio es una marca de NexuraIA.

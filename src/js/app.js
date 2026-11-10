@@ -35,6 +35,9 @@ import { WaveDetail } from './ui/waveform.js';
 import { SettingsUI } from './ui/settings-ui.js';
 import { btn } from './ui/controls.js';
 import { Feedback } from './ui/feedback.js';
+import { UpdatesUI } from './ui/updates-ui.js';
+import { Welcome } from './ui/welcome.js';
+import { LegalUI } from './ui/legal-ui.js';
 
 const DEFAULTS = {
   outputMode: 'auto', masterDevice: '', cueDevice: '', latency: 'normal',
@@ -45,6 +48,8 @@ const DEFAULTS = {
   protectLibrary: false, libCols: null, libColsSame: true, libColsByView: {}, libArtSize: 'small', crateSort: 'custom', crateSubTracks: true, libRail: 'auto', libHistOpen: false, folderToCrates: true, crateCollapsed: [], deckLayout: 'auto', stemsDir: '', stemsModel: 'htdemucs', stemsAuto: true, stemsBackground: true, autoAnalyze: true,
   expansions: { flip: false, fxPresets: false, laptop: false, video: false, dvs: false, pitchTime: false },
   ytApiKey: '', ytClientId: '', ytClientSecret: '', spotifyClientId: '',
+  // 1.0: actualizaciones, contador anónimo (null = no se ha preguntado → no se envía) y bienvenida
+  autoUpdate: true, prereleaseUpdates: false, statsEnabled: null, welcomeDone: false,
   panels: { sampler: false }, midiMap: {}, libView: 'all', libSort: { field: null, dir: 1 }
 };
 
@@ -71,9 +76,14 @@ class App extends Emitter {
     this.settings.autoplay = autoplayOptions(this.settings.autoplay);
     this.info = await platform.info();
     this.feedback = new Feedback(this);
+    this.feedback.log('INFO', 'app', `Inicio de la interfaz · ${this.info.version} · ${navigator.language} · ${innerWidth}×${innerHeight} @${devicePixelRatio}`);
+    this.legal = new LegalUI(this);
+    this.welcome = new Welcome(this);
     document.title = 'Nexura DJ Studio' + (this.info.isBeta ? ` ${this.info.version}` : '');
 
     this.engine = await new AudioEngine().init({ latency: this.settings.latency });
+    this.feedback.log('INFO', 'audio', `AudioContext ${this.engine.ctx.state} · ${this.engine.ctx.sampleRate} Hz · ${this.engine.ctx.destination.maxChannelCount} canales`);
+    this.engine.ctx.addEventListener('statechange', () => this.feedback.log(this.engine.ctx.state === 'running' ? 'INFO' : 'WARN', 'audio', 'AudioContext ' + this.engine.ctx.state));
     this.engine.setXfCurve(this.settings.xfCurve);
     this.analyzer = new Analyzer();
     this.library = new Library();
@@ -103,7 +113,10 @@ class App extends Emitter {
     this.buildUI();
     this.actions = buildActions(this);
     this.midi = new MidiManager(this);
-    this.midi.on('devices', () => { this.updateStatus(); this.updateDeckMode(); });
+    this.midi.on('devices', () => {
+      this.updateStatus(); this.updateDeckMode();
+      this.feedback.log('INFO', 'midi', `Dispositivos: ${this.midi.connectedNames.join(', ') || 'ninguno'} · controladora: ${this.midi.controllerName || 'ninguna'}`);
+    });
     this.midi.on('profile', () => this.updateDeckMode());
     await this.midi.init();
     this.stems.refreshStatus().then(() => this.stems.syncBackground()).catch(e => console.warn('stems', e));
@@ -123,13 +136,22 @@ class App extends Emitter {
     this.sampler.on('change', () => this.saveSamplerSoon());
 
     if (this.engine.ctx.state !== 'running') this.showStartOverlay();
-    setTimeout(() => { this.feedback.welcome(); this.feedback.flushQueue(); }, 600);
+    setTimeout(() => { if (this.welcome.shouldShow()) this.welcome.open(); this.feedback.flushQueue(); }, 600);
+    this.updatesUI = new UpdatesUI(this);
+    this.statsTimer = setTimeout(() => this.sendStatsSoon(), 20000);
     requestAnimationFrame(() => this.frame());
     setInterval(() => this.decks.forEach(d => d.syncTick()), 250);
     setInterval(() => this.automix.tick().catch(e => console.error('automix', e)), 100);
     setInterval(() => { try { this.autoplay.tick(); } catch (e) { console.error('autoplay', e); } }, 100);
     this.updateStatus();
     window.addEventListener('beforeunload', () => { this.library.save(); platform.storeSet('settings', this.settings); });
+  }
+
+  // Contador anónimo (main/stats.js): solo si el usuario lo ha permitido y hay statsUrl; una vez al día
+  sendStatsSoon() {
+    if (this.settings.statsEnabled !== true) return;
+    clearTimeout(this.statsTimer);
+    this.statsTimer = setTimeout(() => platform.stats.send({ enabled: true, decks: this.deckCount, controller: !!this.midi?.controllerName }).catch(() => {}), 5000);
   }
 
   restoreMixer() {
@@ -205,8 +227,10 @@ class App extends Emitter {
     }));
     this.settingsUI = new SettingsUI(this);
     // barra superior
-    if (this.info.isBeta) $('#topbar .logo').appendChild(el('span', { class: 'beta-badge', title: 'Versión ' + this.info.version }, 'BETA'));
-    this.feedbackBtn = btn('💬 SUGERENCIAS', { cls: 'small feedback-btn', title: 'Enviar un error o una idea a NexuraIA', onClick: () => this.feedback.open() });
+    if (this.info.isBeta) $('#topbar .logo').appendChild(el('span', { class: 'beta-badge', title: 'Versión ' + this.info.version }, /-rc/i.test(this.info.version) ? 'RC' : 'BETA'));
+    this.feedbackBtn = btn('💬 SUGERENCIAS', { cls: 'small feedback-btn', title: 'Enviar un informe de error o una sugerencia a NexuraIA', onClick: () => this.feedback.open() });
+    this.helpBtn = btn('?', { cls: 'small icon help-btn', title: 'Ayuda', onClick: (e) => this.helpMenu(e) });
+    this.helpBtn.setAttribute('aria-label', 'Ayuda');
     this.recBtn = btn('● REC', { cls: 'rec', onClick: () => this.toggleRecord(), title: 'Grabar la sesión (WAV)' });
     this.recTime = el('span', { class: 'rec-time' }, '');
     this.midiStatus = el('span', { class: 'status-pill' }, 'MIDI');
@@ -218,7 +242,7 @@ class App extends Emitter {
     this.automix.on('change', () => this.automixBtn.classList.toggle('on', this.automix.enabled));
     this.autoplayUI = new AutoplayUI(this);
     $('#top-right').append(this.feedbackBtn, this.autoplayUI.ind, this.autoplayUI.topBtn, this.automixBtn, this.laptopToggle, this.samplerToggle, this.recBtn, this.recTime, this.outStatus, this.midiStatus,
-      btn('⚙', { cls: 'small icon', title: 'Ajustes', onClick: () => this.settingsUI.open() }), this.clock);
+      this.helpBtn, btn('⚙', { cls: 'small icon', title: 'Ajustes', onClick: () => this.settingsUI.open() }), this.clock);
     $('#wave-zoom').append(
       btn('−', { cls: 'micro', title: 'Alejar', onClick: () => this.waves.forEach(w => { w.zoom = Math.min(40, w.zoom * 1.25); }) }),
       btn('+', { cls: 'micro', title: 'Acercar', onClick: () => this.waves.forEach(w => { w.zoom = Math.max(1.5, w.zoom / 1.25); }) }));
@@ -230,6 +254,21 @@ class App extends Emitter {
     // arrastrar archivos sobre cualquier parte → importar
     window.addEventListener('dragover', (e) => e.preventDefault());
     window.addEventListener('drop', (e) => e.preventDefault());
+  }
+
+  // Menú de ayuda (botón ? de la barra superior)
+  helpMenu(e) {
+    const r = this.helpBtn.getBoundingClientRect();
+    this.contextMenu({ clientX: r.left, clientY: r.bottom + 4 }, [
+      { label: 'Enviar informe o sugerencia…', fn: () => this.feedback.open() },
+      { label: 'Ver bienvenida', fn: () => this.welcome.open() },
+      { label: 'Atajos de teclado', fn: () => this.settingsUI.open('keys') },
+      { label: 'Copias de seguridad de la biblioteca', fn: () => this.settingsUI.open('library') },
+      { label: 'Licencia de uso', fn: () => this.legal.show('licencia') },
+      { label: 'Política de privacidad', fn: () => this.legal.show('privacidad') },
+      { label: 'Acerca de Nexura DJ Studio', fn: () => this.settingsUI.open('about') }
+    ]);
+    e && e.stopPropagation();
   }
 
   setWaveLayout(mode, persist = true) {
@@ -408,6 +447,7 @@ class App extends Emitter {
     catch (e) {
       const lost = (await platform.existsMany([t.path]))?.[0] === false;
       if (lost) this.libraryUI.markMissing(t.id, true);
+      this.feedback.log('WARN', 'audio', `No se pudo cargar en el deck ${idx + 1}: ${lost ? 'archivo perdido' : (e && e.message) || e} · ${t.path}`);
       toast(lost ? `Archivo perdido: ${t.path}. Clic derecho → «Relocalizar archivos perdidos…»` : `No se pudo abrir el archivo: ${t.path}`, 'error', 7000);
       return;
     }
@@ -1009,7 +1049,7 @@ class App extends Emitter {
     const B = 'KeyQ KeyW KeyE KeyR KeyT KeyY KeyU KeyI'.split(' ');
     document.addEventListener('keydown', (e) => {
       const tag = (e.target.tagName || '').toLowerCase();
-      if (tag === 'input' || tag === 'textarea' || tag === 'select' || this._modal) return;
+      if (tag === 'input' || tag === 'textarea' || tag === 'select' || this._modal || this.welcome?.isOpen) return;
       if ((e.ctrlKey || e.metaKey) && e.code === 'KeyF') { e.preventDefault(); this.libraryUI.searchIn.focus(); return; }
       // Supr = quitar de la vista (crate, Prepare) o de la biblioteca, con el foco en la tabla;
       // Ctrl+Supr = eliminar de la biblioteca al instante (sin confirmar), con pistas seleccionadas y el foco
