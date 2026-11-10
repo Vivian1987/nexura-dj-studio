@@ -15,7 +15,7 @@ const GRID = 'var(--lib-cols)';
 const SIDE_MIN = 140, SIDE_MAX = 520;
 const ART_SIZES = { small: { row: 28, col: 30 }, medium: { row: 44, col: 46 } };
 // 1 h 05 min / 42 min
-const countLabel = (n) => n === 1 ? '1 pista' : `${n} pistas`;
+const countLabel = (n, one = 'pista', many = 'pistas') => n === 1 ? '1 ' + one : `${n} ${many}`;
 const fmtTotal = (s) => { const m = Math.round(s / 60); return m >= 60 ? `${Math.floor(m / 60)} h ${String(m % 60).padStart(2, '0')} min` : `${m} min`; };
 // minúsculas y sin acentos (buscador de la barra lateral)
 const fold = (s) => String(s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
@@ -408,6 +408,9 @@ export class LibraryUI {
     const q = fold(this.treeQ), hit = (s) => !q || fold(s).includes(q);
     let local = 0, yt = 0;
     for (const x of L.tracks.values()) { if (x.source === 'local') local++; else if (x.source === 'youtube') yt++; }
+    // la vista abierta ya no existe (lista de YouTube borrada o ningún vídeo): a YouTube o a «Todas las pistas»
+    const gone = this.viewId === 'yt-all' ? !yt : this.viewId.startsWith('yt:') && !L.ytPlaylists.some(p => 'yt:' + p.id === this.viewId);
+    if (gone) this.setView(yt ? 'yt-all' : 'all');
     const libMenu = [
       { label: 'Relocalizar archivos perdidos…', fn: () => this.app.relocateMissing() },
       { label: 'Comprobar archivos perdidos', fn: () => this.checkAllMissing() }
@@ -441,13 +444,10 @@ export class LibraryUI {
     }));
     // LISTAS ONLINE: YouTube (todos los vídeos y listas importadas) y listas importadas de Spotify
     const online = [];
-    if (hit('YouTube · todos los vídeos')) online.push(this.sideItem('yt-all', 'YouTube · todos los vídeos', yt, { icon: 'yt', cls: 'yt' }));
+    // sin vídeos de YouTube no se muestra la vista agregada
+    if (yt && hit('YouTube · todos los vídeos')) online.push(this.sideItem('yt-all', 'YouTube · todos los vídeos', yt, { icon: 'yt', cls: 'yt', title: 'Todos los vídeos de YouTube de la biblioteca · clic derecho: quitarlos', menu: () => this.ytAllMenu() }));
     online.push(...L.ytPlaylists.filter(p => hit(p.title)).map(p => this.sideItem('yt:' + p.id, p.title, p.ids.length, {
-      icon: 'yt', cls: 'yt', title: 'Lista de YouTube',
-      menu: [
-        { label: 'Actualizar desde YouTube', fn: () => this.app.ytImport(p.playlistId) },
-        { label: 'Eliminar lista', fn: () => { if (L.deleteYtPlaylist(p.id) && this.viewId === 'yt:' + p.id) this.setView('yt-all'); } }
-      ]
+      icon: 'yt', cls: 'yt', title: 'Lista de YouTube', menu: () => this.ytListMenu(p)
     })));
     online.push(...this.lib.sortedCrates(this.app.settings.crateSort).filter(c => this.isOnlineCrate(c) && hit(c.name)).map(c => this.crateItem({ c, depth: 0, hasKids: false, open: false })));
     const groups = [
@@ -978,11 +978,20 @@ export class LibraryUI {
   // ------------------------------------------------------------ quitar pistas (menú y teclado)
   // Foco en la tabla (no en el buscador ni en la barra lateral)
   tableFocused() { return this.focus === 'table' && this.scroller.contains(document.activeElement); }
-  // Supr: lo que corresponde a la vista; hard (Ctrl+Supr): eliminar de la biblioteca desde cualquier vista
+  // Ctrl+Supr: con pistas seleccionadas en la tabla vale también con el foco en otra parte de la
+  // biblioteca (barra lateral, cabecera…) o sin foco; nunca en campos de texto ni diálogos (app.js)
+  hardDeleteReady() {
+    if (!this.sel.size) return false;
+    const a = document.activeElement;
+    return this.tableFocused() || !a || a === document.body || this.root.contains(a);
+  }
+  // Supr: lo que corresponde a la vista; hard (Ctrl+Supr): eliminar de la biblioteca desde cualquier vista,
+  // al instante y sin confirmar (aviso con «Deshacer» y Ctrl+Z)
   deleteKey(hard = false) {
     const ids = this.selected().map(t => t.id), v = this.viewId;
     if (!ids.length) return false;
-    if (hard || v === 'all' || v === 'everything' || v === 'yt-all') return this.deleteFromLibrary(ids);
+    if (hard) return this.deleteFromLibrary(ids, { ask: false });
+    if (v === 'all' || v === 'everything' || v === 'yt-all') return this.deleteFromLibrary(ids, { ask: true });   // Supr sin Ctrl: con confirmación, como antes
     if (v.startsWith('crate:')) return this.removeFromCrate(v.slice(6), ids);
     if (v === 'prepare') return this.removeFromPrepare(ids);
     // historial, smart crates, Siguiente pista (IA) y listas de YouTube: su contenido no se edita a mano
@@ -998,27 +1007,117 @@ export class LibraryUI {
     const first = this.firstSelIndex(ids);
     const undo = L.removeFromCrate(cid, ids, this.crateDeep(cid));
     if (!undo) return false;
-    this.pendingSel = first;
+    this.pendingSel = first; this.refresh();   // en el acto (no esperar al redibujado): otra pulsación seguida actúa ya sobre la siguiente
     const name = this.crateLabel(c);
-    toast(`${countLabel(ids.length)} ${ids.length === 1 ? 'quitada' : 'quitadas'} de «${name}»`, 'ok', 6000,
-      undo.length ? { label: 'Deshacer', fn: () => { if (L.restoreCrates(undo)) toast(`Pistas devueltas a «${name}»`, 'ok'); } } : null);
+    const fn = undo.length ? this.pushUndo(() => { if (L.restoreCrates(undo)) toast(`Pistas devueltas a «${name}»`, 'ok'); }) : null;
+    toast(`${countLabel(ids.length)} ${ids.length === 1 ? 'quitada' : 'quitadas'} de «${name}»`, 'ok', 6000, fn ? { label: 'Deshacer', fn } : null);
     return true;
   }
   removeFromPrepare(ids) {
     const L = this.lib, first = this.firstSelIndex(ids);
     const old = L.removeFromPrepare(ids);
-    this.pendingSel = first;
-    toast(`${countLabel(ids.length)} ${ids.length === 1 ? 'quitada' : 'quitadas'} de Prepare`, 'ok', 6000, { label: 'Deshacer', fn: () => { L.restorePrepare(old); toast('Pistas devueltas a Prepare', 'ok'); } });
+    this.pendingSel = first; this.refresh();
+    const fn = this.pushUndo(() => { L.restorePrepare(old); toast('Pistas devueltas a Prepare', 'ok'); });
+    toast(`${countLabel(ids.length)} ${ids.length === 1 ? 'quitada' : 'quitadas'} de Prepare`, 'ok', 6000, { label: 'Deshacer', fn });
     return true;
   }
-  async deleteFromLibrary(ids) {
+  // Eliminar de la biblioteca (los archivos no se borran). ask: pedir confirmación (null = solo si son
+  // más de 20, el menú de la pista; la tecla Ctrl+Supr nunca pregunta). Siempre con «Deshacer» / Ctrl+Z
+  async deleteFromLibrary(ids, { ask = null } = {}) {
     const L = this.lib;
     if (!ids.length || !L.guard('remove')) return false;
     const first = this.firstSelIndex(ids);
-    const ok = await this.app.confirm(`¿Quitar ${countLabel(ids.length)} de la biblioteca? Los archivos no se borran del disco.`);
-    if (ok && L.remove(ids)) { this.pendingSel = first; toast(`${countLabel(ids.length)} ${ids.length === 1 ? 'eliminada' : 'eliminadas'} de la biblioteca`, 'ok'); }
-    this.scroller.focus({ preventScroll: true });   // para seguir con el teclado tras el diálogo
-    return ok;
+    if (ask == null) ask = ids.length > 20;
+    if (ask) {
+      const ok = await this.app.confirm(`¿Quitar ${countLabel(ids.length)} de la biblioteca? Los archivos no se borran del disco.`);
+      this.scroller.focus({ preventScroll: true });   // para seguir con el teclado tras el diálogo
+      if (!ok) return false;
+    }
+    const undo = L.remove(ids);
+    if (!undo || !undo.tracks.length) return false;
+    this.pendingSel = first; this.refresh();   // en el acto: Ctrl+Supr varias veces seguidas va eliminando la siguiente
+    const fn = this.pushUndo(() => { if (L.restoreRemoved(undo)) toast(`${countLabel(undo.tracks.length)} ${undo.tracks.length === 1 ? 'devuelta' : 'devueltas'} a la biblioteca`, 'ok'); });
+    toast(`${countLabel(ids.length)} ${ids.length === 1 ? 'eliminada' : 'eliminadas'} de la biblioteca (los archivos siguen en el disco)`, 'ok', 8000, { label: 'Deshacer', fn });
+    return true;
+  }
+
+  // ------------------------------------------------------------ YouTube: quitar vídeos y listas
+  ytAllMenu() {
+    const n = this.lib.ytTrackIds().length;
+    return [{ label: `Quitar todos los vídeos de YouTube de la biblioteca (${n})`, key: 'Supr', danger: true, fn: () => this.removeAllYt() }];
+  }
+  ytListMenu(p) {
+    const n = this.lib.ytPlaylistOrphans(p.id).length;
+    return [
+      { label: 'Actualizar desde YouTube', fn: () => this.app.ytImport(p.playlistId) },
+      { label: 'Eliminar lista', key: 'Supr', danger: true, fn: () => this.deleteYtList(p) },
+      { label: `Eliminar lista y sus vídeos de la biblioteca (${n})`, danger: true, fn: () => this.deleteYtListAndVideos(p) }
+    ];
+  }
+  // «YouTube · todos los vídeos»: todos fuera de la biblioteca (y de crates, Prepare y listas), con Deshacer
+  async removeAllYt() {
+    const L = this.lib, ids = L.ytTrackIds();
+    if (!ids.length || !L.guard('remove')) return false;
+    if (!await this.app.confirm(`¿Quitar ${ids.length === 1 ? 'el vídeo' : `los ${ids.length} vídeos`} de YouTube de la biblioteca? También salen de las crates, de Prepare y de las listas de YouTube.`)) return false;
+    const undo = L.remove(ids);
+    if (!undo || !undo.tracks.length) return false;
+    const fn = this.pushUndo(() => { if (L.restoreRemoved(undo)) toast(`${countLabel(undo.tracks.length, 'vídeo', 'vídeos')} de YouTube ${undo.tracks.length === 1 ? 'devuelto' : 'devueltos'} a la biblioteca`, 'ok'); });
+    toast(`${countLabel(undo.tracks.length, 'vídeo', 'vídeos')} de YouTube ${undo.tracks.length === 1 ? 'quitado' : 'quitados'} de la biblioteca`, 'ok', 8000, { label: 'Deshacer', fn });
+    return true;
+  }
+  // Lista importada: solo la lista (los vídeos siguen en «YouTube · todos los vídeos»)
+  async deleteYtList(p, { ask = false } = {}) {
+    const L = this.lib;
+    if (!L.guard('crate')) return false;
+    if (ask && !await this.app.confirm(`¿Eliminar la lista «${p.title}»? Sus vídeos siguen en la biblioteca.`)) return false;
+    const undo = L.deleteYtPlaylist(p.id);
+    if (!undo) return false;
+    const fn = this.pushUndo(() => { if (L.restoreYtPlaylist(undo)) toast(`Lista «${p.title}» recuperada`, 'ok'); });
+    toast(`Lista «${p.title}» eliminada`, 'ok', 6000, { label: 'Deshacer', fn });
+    return true;
+  }
+  // Lista y sus vídeos que no estén en otra lista ni en una crate
+  async deleteYtListAndVideos(p) {
+    const L = this.lib, n = L.ytPlaylistOrphans(p.id).length;
+    if (!L.guard('crate') || !L.guard('remove')) return false;
+    const kept = new Set(p.ids).size - n;
+    if (!await this.app.confirm(`¿Eliminar la lista «${p.title}» y quitar ${countLabel(n, 'vídeo', 'vídeos')} de la biblioteca?` + (kept ? ` ${countLabel(kept, 'vídeo', 'vídeos')} se ${kept === 1 ? 'queda' : 'quedan'} porque ${kept === 1 ? 'está' : 'están'} en otra lista o en una crate.` : ''))) return false;
+    const undo = L.deleteYtPlaylistWithVideos(p.id);
+    if (!undo) return false;
+    const fn = this.pushUndo(() => { if (L.restoreYtPlaylistWithVideos(undo)) toast(`Lista «${p.title}» y sus vídeos recuperados`, 'ok'); });
+    toast(`Lista «${p.title}» eliminada` + (n ? ` · ${countLabel(n, 'vídeo', 'vídeos')} ${n === 1 ? 'quitado' : 'quitados'} de la biblioteca` : ''), 'ok', 8000, { label: 'Deshacer', fn });
+    return true;
+  }
+  // Supr / Ctrl+Supr con el foco en una fila de YouTube de la barra lateral (siempre con confirmación)
+  sideDeleteTarget() {
+    const a = document.activeElement;
+    if (!a || !this.tree.contains(a) || !a.classList.contains('side-item')) return null;
+    const v = a.dataset.view || '';
+    if (v === 'yt-all') return { all: true };
+    const p = v.startsWith('yt:') && this.lib.ytPlaylists.find(x => 'yt:' + x.id === v);
+    return p ? { list: p } : null;
+  }
+  sideDeleteKey() {
+    const t = this.sideDeleteTarget();
+    if (!t) return false;
+    if (t.all) this.removeAllYt(); else this.deleteYtList(t.list, { ask: true });
+    return true;
+  }
+
+  // Deshacer de Supr / Ctrl+Supr: el botón del aviso o Ctrl+Z (la última primero; vale durante 2 minutos).
+  // Devuelve la función del botón: cada deshacer se aplica una sola vez
+  pushUndo(apply) {
+    const u = { apply, at: Date.now(), done: false };
+    const run = () => { if (u.done) return false; u.done = true; this.undoStack = this.undoStack.filter(x => x !== u); apply(); return true; };
+    u.run = run;
+    this.undoStack = [...(this.undoStack || []), u].slice(-20);
+    return run;
+  }
+  undoLast() {
+    const now = Date.now();
+    this.undoStack = (this.undoStack || []).filter(u => !u.done && now - u.at < 120000);
+    const u = this.undoStack[this.undoStack.length - 1];
+    return u ? u.run() : false;
   }
   firstSelIndex(ids) { const s = new Set(ids); const i = this.rows.findIndex(t => s.has(t.id)); return i < 0 ? null : i; }
 

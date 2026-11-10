@@ -49,7 +49,11 @@ export class Autoplay extends Emitter {
     const app = this.app, src = this.sourceFromView();
     if (!src.ids.length) { app.toast(`Autoplay: «${src.name}» no tiene pistas. Abre un crate con canciones.`, 'warn'); return false; }
     const o = this.opts;
-    const queue = new AutoplayQueue(src.ids, { order: o.order, repeat: o.repeat, startId: o.order === 'list' ? src.startId : null, skip: o.skipPlayed ? app.library.playedIds() : [] });
+    // ¿ya suena algo? (cualquier deck, también el 3 o el 4): esa pista sigue y el Autoplay continúa desde su deck
+    const E0 = app.engine;
+    const live = app.decks.filter(d => d.playing && d.track).sort((a, b) => E0.effectiveGain(b.idx) - E0.effectiveGain(a.idx))[0] || null;
+    const liveId = live && src.ids.includes(live.track.id) ? live.track.id : null;
+    const queue = new AutoplayQueue(src.ids, { order: o.order, repeat: o.repeat, startId: o.order === 'list' ? src.startId : null, currentId: liveId, skip: o.skipPlayed ? [...app.library.playedIds()].filter(id => id !== liveId) : [] });
     if (!queue.available) { app.toast(`Autoplay: ya se han tocado todas las pistas de «${src.name}» en esta sesión`, 'warn'); return false; }
     if (this.on_) this.stop(true);
     if (app.automix.enabled) { app.automix.toggle(false); app.toast('Automix desactivado: ahora pincha el Autoplay', 'info'); }
@@ -57,23 +61,31 @@ export class Autoplay extends Emitter {
     this.gen++;
     this.queue = queue; this.source = src;
     const L = app.layers || [0, 1];
-    this.pair = [app.decks[L[0]], app.decks[L[1]]];
-    // key lock en los dos decks, como el Automix (al sincronizar no cambian las tonalidades)
+    // la pareja de decks incluye siempre el que está sonando (y el visible del otro lado)
+    this.pair = live ? (live.idx % 2 === 0 ? [live, app.decks[L[1]]] : [app.decks[L[0]], live]) : [app.decks[L[0]], app.decks[L[1]]];
+    // key lock en los dos decks, como el Automix (al sincronizar no cambian las tonalidades). En el deck
+    // que ya suena no se toca (cambiaría el tono de lo que se oye): se pone cuando vuelva a entrar (begin)
     this.savedKeylock = this.pair.map(d => d.keylock);
-    this.pair.forEach(d => { if (!d.keylock) d.toggleKeylock(); });
+    this.pair.forEach(d => { if (d !== live) this.lockKey(d); });
     this.on_ = true;
     const tr = { gapless: 'seguidas', fade: `fundido de ${o.fadeSecs} s`, sync: 'mezcla con sync' }[o.transition];
     app.toast(`Autoplay: «${src.name}» · ${queue.available} pistas · ${o.order === 'shuffle' ? 'aleatorio' : 'en orden'} · ${tr}`, 'ok', 4500);
     this.emit('change');
-    const cur = this.current();
-    if (cur) {
-      // ya suena algo: se carga la primera de la lista en el otro deck y se pasa a ella con una transición
-      const other = this.other(cur);
-      if (other.playing) other.pause();
-      this.force = true;
+    if (live) {
+      // ya suena algo: esa pista SIGUE sonando en su deck (sin tocar fader, tempo ni key lock); la siguiente
+      // de la lista se prepara en el otro deck y entra con la transición elegida al final de la actual.
+      // Si la que suena no es de la lista, al acabar empieza la lista (por la seleccionada o la primera)
+      const other = this.other(live);
+      // el otro deck se para solo si no se oye (fader bajado, crossfader al otro lado); si se oye, el
+      // Autoplay espera a que acabe una de las dos, como cuando el usuario arranca los dos decks
+      if (other.playing && E0.effectiveGain(other.idx) < 0.02) other.pause();
+      this.lastCur = live;
+      this.playing = { id: live.track.id, index: liveId ? queue.index : 0, title: trackTitle(live.track) };
+      this.emit('change');
     } else await this.startFirst();
     return true;
   }
+  lockKey(d) { if (d && !d.keylock) d.toggleKeylock(); }
 
   // Nada suena: carga la primera pista en un deck y la pone en marcha
   async startFirst() {
@@ -206,6 +218,7 @@ export class Autoplay extends Emitter {
     this.playing = this.ready ? { id: this.ready.id, index: this.ready.index, title: this.ready.title } : { id: to.track.id, index: 0, title: trackTitle(to.track) };
     this.ready = null;
     this.ensureAudible(to);
+    if (!to.playing) this.lockKey(to);
     if (to.sync && kind !== 'sync') to.setSync(false);
     if (kind !== 'sync' && !to.isYT) to.resetTempo();
     if (kind === 'cut' || kind === 'gapless') {

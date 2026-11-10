@@ -111,6 +111,47 @@ await test('Pistas que fallan al cargar: se saltan siempre; si fallan todas, la 
   assert.equal(new AutoplayQueue(['a', 'a', 'b']).total, 2);
 });
 
+await test('Ya suena una pista de la lista (currentId), en orden: la cola sigue DESPUÉS de ella, con y sin repetir', () => {
+  const q = new AutoplayQueue(IDS, { order: 'list', currentId: 'c' });
+  assert.equal(q.index, 3);                       // indicador «3/5» mientras suena la actual
+  assert.equal(q.current(), 'c');
+  assert.equal(q.peek(), 'd');                    // «siguiente: d»
+  assert.deepEqual(take(q, 6), ['d', 'e', 'a', 'b', 'c', 'd']);
+  // sin repetir: acaba al llegar al final de la tabla
+  const r = new AutoplayQueue(IDS, { order: 'list', repeat: false, currentId: 'd' });
+  assert.deepEqual(take(r, 3), ['e', null, null]);
+  // la última de la lista sin repetir: no queda ninguna (fin al acabar la actual)
+  assert.equal(new AutoplayQueue(IDS, { repeat: false, currentId: 'e' }).peek(), null);
+  // la que suena manda sobre la seleccionada
+  assert.equal(new AutoplayQueue(IDS, { startId: 'a', currentId: 'b' }).next(), 'c');
+  // la que suena no es de la lista: como si no sonara nada (seleccionada o la primera)
+  const o = new AutoplayQueue(IDS, { startId: 'c', currentId: 'zz' });
+  assert.equal(o.next(), 'c');
+  assert.equal(new AutoplayQueue(IDS, { currentId: 'zz' }).next(), 'a');
+  // «Saltar las ya tocadas» se salta las de después, pero la actual sigue contando como actual
+  const s = new AutoplayQueue(IDS, { currentId: 'b', skip: ['c', 'e'] });
+  assert.equal(s.index, 2);
+  assert.deepEqual(take(s, 4), ['d', 'a', 'b', 'd']);
+});
+
+await test('Ya suena una pista de la lista (currentId), aleatorio: es la primera de la vuelta y no se repite', () => {
+  for (let seed = 1; seed <= 300; seed++) {
+    const q = new AutoplayQueue(IDS, { order: 'shuffle', currentId: 'c', rng: rng(seed) });
+    assert.equal(q.index, 1); assert.equal(q.current(), 'c');
+    const run = ['c', ...take(q, 14)];
+    for (let k = 0; k < 3; k++) assert.deepEqual([...run.slice(k * 5, k * 5 + 5)].sort(), IDS, 'cada vuelta tiene todas una vez (semilla ' + seed + ')');
+    for (let i = 1; i < run.length; i++) assert.notEqual(run[i], run[i - 1], 'sin repetición seguida (semilla ' + seed + ')');
+    // sin repetir: las otras 4 una vez cada una y fin
+    const r = new AutoplayQueue(IDS, { order: 'shuffle', repeat: false, currentId: 'c', rng: rng(seed) });
+    const rest = take(r, 5);
+    assert.equal(rest[4], null);
+    assert.deepEqual(rest.slice(0, 4).sort(), ['a', 'b', 'd', 'e']);
+  }
+  // peek() sigue anunciando lo que dará next()
+  const p = new AutoplayQueue(IDS, { order: 'shuffle', currentId: 'a', rng: rng(11) });
+  for (let i = 0; i < 12; i++) { const x = p.peek(); assert.equal(p.next(), x); }
+});
+
 await test('Momento de la transición y niveles del fundido', () => {
   assert.equal(transitionStart('fade', 200, { fadeSecs: 5 }), 195);
   assert.equal(transitionStart('fade', 200, { fadeSecs: 5, tempo: 1.1 }), 200 - 5.5);
@@ -131,6 +172,7 @@ await test('Opciones guardadas saneadas y texto del indicador', () => {
   assert.equal(autoplayOptions({ fadeSecs: 0.4 }).fadeSecs, 1);
   assert.equal(autoplayLabel({ source: 'Dance › Años 80', index: 3, total: 120, next: 'A – B' }), 'AUTOPLAY · Dance › Años 80 · 3/120 · siguiente: A – B');
   assert.equal(autoplayLabel({ source: 'Prepare' }), 'AUTOPLAY · Prepare');
+  assert.equal(autoplayLabel({ source: 'Dance', index: 0, total: 120, next: 'A – B' }), 'AUTOPLAY · Dance · –/120 · siguiente: A – B');
 });
 
 console.log(`\n${n} pruebas del Autoplay superadas`);
