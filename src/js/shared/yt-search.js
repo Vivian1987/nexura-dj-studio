@@ -11,7 +11,7 @@
   else root.nexuraYtSearch = api;
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
   'use strict';
-  const GUIDE = 'https://github.com/mcontrerasdevpro/nexura-dj-studio#youtube';
+  const GUIDE = 'https://github.com/mcontrerasdevpro/nexura-dj-studio#youtube-y-spotify';
   const MSG = {
     limit: 'Has llegado al límite diario de búsquedas gratuitas. Mañana se renueva, o pon tu propia clave en Ajustes → YouTube.',
     down: 'El servicio de búsqueda de NexuraIA no responde ahora mismo. Inténtalo más tarde o pon tu propia clave en Ajustes → YouTube.',

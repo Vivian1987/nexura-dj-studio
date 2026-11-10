@@ -77,17 +77,31 @@ Funciona con **cualquier controladora MIDI**: un asistente aprende cada control 
 
 > **YouTube:** los vídeos se reproducen en su reproductor oficial dentro del deck. Sus condiciones no permiten procesar el audio, así que en esas pistas no hay EQ, efectos, scratch, loops ni stems.
 
-## YouTube
+## YouTube y Spotify
 
-- **Importar listas** públicas o no listadas: pega el enlace, sin configurar nada.
-- **Buscar vídeos:** funciona sin configurar nada con el servicio gratuito de NexuraIA (30 búsquedas al día por instalación). Si buscas mucho, pon tu propia clave de API, que es gratis:
-  1. Entra en [console.cloud.google.com](https://console.cloud.google.com/) con tu cuenta de Google y crea un proyecto (por ejemplo «Nexura DJ»).
-  2. **APIs y servicios → Biblioteca** → busca **YouTube Data API v3** → **Habilitar**.
-  3. **APIs y servicios → Credenciales → Crear credenciales → Clave de API**. En «Restricciones de API» elige solo *YouTube Data API v3* (deja «Restricciones de aplicación» en *Ninguna*).
-  4. Copia la clave (empieza por `AIza`) en **Ajustes → YouTube → Clave de API** y pulsa **Comprobar clave**.
-  
-  Con tu clave tienes unas 100 búsquedas al día (la cuota se renueva a las 9:00, hora de España) y la búsqueda va directamente a Google.
-- **Mis listas** (también las privadas): conecta tu cuenta de Google en Ajustes → YouTube con un cliente OAuth de tipo «Aplicación de escritorio».
+**Sin configurar nada** puedes:
+- Importar listas de YouTube pegando su enlace (hasta 200 vídeos por lista) y pincharlas.
+- Importar listas de Spotify pegando su enlace: Nexura lee título, artistas, duración y carátula y las busca **en tu música**. No se descarga audio de Spotify ni de YouTube.
+
+**Con una clave gratuita de YouTube** además puedes **buscar** en YouTube (por ejemplo «▶ Buscar en YouTube las que faltan» al importar una lista de Spotify) e importar listas completas de más de 200 vídeos.
+
+<details>
+<summary><b>Cómo conseguir la clave de YouTube (5 minutos, gratis)</b></summary>
+
+1. Entra en [console.cloud.google.com](https://console.cloud.google.com) con tu cuenta de Google. No hace falta tarjeta.
+2. En el selector de proyectos de arriba, pulsa **Proyecto nuevo**, ponle un nombre (por ejemplo «Nexura DJ») y créalo.
+3. Ve a **APIs y servicios → Biblioteca**, busca **YouTube Data API v3** y pulsa **Habilitar**.
+4. Ve a **APIs y servicios → Credenciales → Crear credenciales → Clave de API**.
+5. En **Restricciones de API**, escribe «YouTube» en el filtro, marca solo **YouTube Data API v3** y pulsa **Aceptar**. En restricciones de aplicación deja **Ninguna**. Pulsa **Crear** y copia la clave (empieza por `AIza…`).
+6. En Nexura: **⚙ Ajustes → YouTube → Clave de API**, pega la clave y haz clic fuera del campo para guardarla.
+
+La clave gratuita permite unas 100 búsquedas al día. Es personal: no la compartas ni la publiques. Si crees que alguien la ha visto, regenérala en **Credenciales** y pega la nueva en Nexura.
+
+Si aparece un aviso sobre «cuenta de servicio», ignóralo: solo afecta a otras APIs de Google.
+
+</details>
+
+**Mis listas (opcional):** para ver tus listas privadas de YouTube, crea en la misma consola un cliente OAuth de tipo «Aplicación de escritorio» y pon su Client ID y Client secret en **Ajustes → YouTube → Conectar cuenta**.
 
 ## Controladoras
 
